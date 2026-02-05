@@ -379,6 +379,66 @@ public class DesignService : IDesignService
     private bool IsComponentCacheExpired() => DateTime.Now - _componentCacheRefresh > _cacheExpiration;
     private bool IsNetCacheExpired() => DateTime.Now - _netCacheRefresh > _cacheExpiration;
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<DrillTool>> GetDrillToolsAsync(
+        string designId, 
+        string stepName, 
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting drill tools for design {DesignId}, step {StepName}", designId, stepName);
+
+        try
+        {
+            // TODO: Implement when drill tools API is available
+            return [];
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get drill tools for design {DesignId}, step {StepName}", designId, stepName);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Package>> GetPackagesAsync(
+        string designId, 
+        string stepName, 
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting packages for design {DesignId}, step {StepName}", designId, stepName);
+
+        try
+        {
+            // TODO: Implement when packages API is available
+            return [];
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get packages for design {DesignId}, step {StepName}", designId, stepName);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<Part>> GetPartsAsync(
+        string designId, 
+        string stepName, 
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting parts for design {DesignId}, step {StepName}", designId, stepName);
+
+        try
+        {
+            // TODO: Implement when parts API is available
+            return [];
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "Failed to get parts for design {DesignId}, step {StepName}", designId, stepName);
+            throw;
+        }
+    }
+
     /// <summary>
     /// Clears all cached data.
     /// </summary>

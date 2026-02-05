@@ -48,4 +48,31 @@ public interface IDesignService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A list of layers in stackup order.</returns>
     Task<IReadOnlyList<Layer>> GetStackupAsync(string designId, string stepName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the drill tools for a design.
+    /// </summary>
+    /// <param name="designId">The design identifier.</param>
+    /// <param name="stepName">The step name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A list of drill tools.</returns>
+    Task<IReadOnlyList<DrillTool>> GetDrillToolsAsync(string designId, string stepName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the packages for a design.
+    /// </summary>
+    /// <param name="designId">The design identifier.</param>
+    /// <param name="stepName">The step name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A list of packages.</returns>
+    Task<IReadOnlyList<Package>> GetPackagesAsync(string designId, string stepName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets the parts for a design.
+    /// </summary>
+    /// <param name="designId">The design identifier.</param>
+    /// <param name="stepName">The step name.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>A list of parts.</returns>
+    Task<IReadOnlyList<Part>> GetPartsAsync(string designId, string stepName, CancellationToken cancellationToken = default);
 }

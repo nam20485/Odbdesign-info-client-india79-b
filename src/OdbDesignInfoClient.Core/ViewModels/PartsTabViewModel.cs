@@ -58,11 +58,22 @@ public partial class PartsTabViewModel : ViewModelBase
         IsLoading = true;
         try
         {
-            // TODO: Implement when parts API is available
+            var parts = await _designService.GetPartsAsync(designId, stepName, cancellationToken);
             _allParts.Clear();
-            TotalCount = 0;
+
+            foreach (var part in parts)
+            {
+                _allParts.Add(new PartRowViewModel(_navigationService)
+                {
+                    PartNumber = part.PartNumber,
+                    Manufacturer = part.Manufacturer,
+                    Description = part.Description,
+                    UsageCount = part.UsageCount
+                });
+            }
+
+            TotalCount = _allParts.Count;
             ApplyFilter();
-            await Task.CompletedTask;
         }
         finally
         {

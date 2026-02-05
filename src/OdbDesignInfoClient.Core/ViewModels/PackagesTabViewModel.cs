@@ -58,11 +58,23 @@ public partial class PackagesTabViewModel : ViewModelBase
         IsLoading = true;
         try
         {
-            // TODO: Implement when packages API is available
+            var packages = await _designService.GetPackagesAsync(designId, stepName, cancellationToken);
             _allPackages.Clear();
-            TotalCount = 0;
+
+            foreach (var package in packages)
+            {
+                _allPackages.Add(new PackageRowViewModel
+                {
+                    Name = package.Name,
+                    Pitch = package.Pitch,
+                    PinCount = package.PinCount,
+                    Width = package.Width,
+                    Height = package.Height
+                });
+            }
+
+            TotalCount = _allPackages.Count;
             ApplyFilter();
-            await Task.CompletedTask;
         }
         finally
         {

@@ -49,10 +49,22 @@ public partial class DrillToolsTabViewModel : ViewModelBase
         IsLoading = true;
         try
         {
-            // TODO: Implement when drill tools API is available
+            var drillTools = await _designService.GetDrillToolsAsync(designId, stepName, cancellationToken);
             DrillTools.Clear();
-            TotalTools = 0;
-            await Task.CompletedTask;
+
+            foreach (var tool in drillTools)
+            {
+                DrillTools.Add(new DrillToolRowViewModel
+                {
+                    ToolNumber = tool.ToolNumber,
+                    Diameter = tool.Diameter,
+                    Shape = tool.Shape,
+                    IsPlated = tool.IsPlated,
+                    HitCount = tool.HitCount
+                });
+            }
+
+            TotalTools = DrillTools.Count;
         }
         finally
         {

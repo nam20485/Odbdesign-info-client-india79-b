@@ -63,6 +63,12 @@ public interface IOdbDesignRestApi
     Task<ApiResponse<string>> GetPackagesAsync(string name, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets the drill tools for a design.
+    /// </summary>
+    [Get("/designs/{name}/drilltools")]
+    Task<ApiResponse<string>> GetDrillToolsAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Liveness health check endpoint.
     /// </summary>
     [Get("/healthz/live")]

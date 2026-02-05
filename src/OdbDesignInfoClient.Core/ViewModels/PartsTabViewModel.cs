@@ -114,13 +114,13 @@ public partial class PartRowViewModel : ObservableObject
     private readonly INavigationService _navigationService;
 
     [ObservableProperty]
-    private readonly string _partNumber = string.Empty;
+    private string _partNumber = string.Empty;
 
     [ObservableProperty]
-    private readonly string _manufacturer = string.Empty;
+    private string _manufacturer = string.Empty;
 
     [ObservableProperty]
-    private readonly string _description = string.Empty;
+    private string _description = string.Empty;
 
     [ObservableProperty]
     private int _usageCount;
@@ -129,7 +129,7 @@ public partial class PartRowViewModel : ObservableObject
     private bool _isExpanded;
 
     [ObservableProperty]
-    private readonly ObservableCollection<PartUsageRowViewModel> _usages = [];
+    private ObservableCollection<PartUsageRowViewModel> _usages = [];
 
     /// <summary>
     /// Initializes a new instance of PartRowViewModel.
@@ -160,7 +160,7 @@ public partial class PartUsageRowViewModel : ObservableObject
     private readonly INavigationService _navigationService;
 
     [ObservableProperty]
-    private readonly string _componentRefDes = string.Empty;
+    private string _componentRefDes = string.Empty;
 
     /// <summary>
     /// Initializes a new instance of PartUsageRowViewModel.

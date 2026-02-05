@@ -85,7 +85,7 @@ public partial class DrillToolRowViewModel : ObservableObject
     private double _diameter;
 
     [ObservableProperty]
-    private readonly string _shape = "Round";
+    private string _shape = "Round";
 
     [ObservableProperty]
     private bool _isPlated;
@@ -97,7 +97,7 @@ public partial class DrillToolRowViewModel : ObservableObject
     private bool _isExpanded;
 
     [ObservableProperty]
-    private readonly ObservableCollection<DrillHitRowViewModel> _hits = [];
+    private ObservableCollection<DrillHitRowViewModel> _hits = [];
 
     /// <summary>
     /// Gets the plating status as a string.
@@ -117,5 +117,5 @@ public partial class DrillHitRowViewModel : ObservableObject
     private double _y;
 
     [ObservableProperty]
-    private readonly string _layer = string.Empty;
+    private string _layer = string.Empty;
 }

@@ -242,7 +242,6 @@ public class ConnectionService : IConnectionService, IDisposable
                             Math.Min(reconnectDelay.TotalSeconds * 2, maxReconnectDelay.TotalSeconds));
                     }
                 }
-                }
             }
             catch (OperationCanceledException)
             {

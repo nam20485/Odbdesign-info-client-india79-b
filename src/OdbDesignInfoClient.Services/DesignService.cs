@@ -314,10 +314,11 @@ public class DesignService : IDesignService
 
     private static Component MapProtobufComponent(Odb.Lib.Protobuf.ProductModel.Component proto)
     {
-        // Map position and rotation from protobuf if available, falling back to 0 when missing
-        var rotation = proto.Rotation;
-        var x = proto.CenterPoint?.X ?? 0;
-        var y = proto.CenterPoint?.Y ?? 0;
+        // TODO: Get position and rotation from protobuf when available in schema
+        // For now, using defaults as these properties don't exist in current protobuf definition
+        var rotation = 0.0;
+        var x = 0.0;
+        var y = 0.0;
         var pins = new List<Pin>();
 
         return new Component

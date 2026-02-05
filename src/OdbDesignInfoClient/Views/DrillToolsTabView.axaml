@@ -1,0 +1,66 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OdbDesignInfoClient.Core.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="OdbDesignInfoClient.Views.DrillToolsTabView"
+             x:DataType="vm:DrillToolsTabViewModel">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" 
+                           Text="Drill Tools" 
+                           FontWeight="Bold"
+                           FontSize="16"
+                           VerticalAlignment="Center"/>
+                <Button Grid.Column="1" 
+                        Content="Refresh" 
+                        Command="{Binding RefreshCommand}"/>
+            </Grid>
+        </Border>
+
+        <!-- Loading Overlay -->
+        <Border Grid.Row="1" 
+                IsVisible="{Binding IsLoading}"
+                Background="#80000000"
+                ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading drill tools..." 
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Data Grid -->
+        <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding DrillTools}"
+                  SelectedItem="{Binding SelectedTool}"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Tool #" Binding="{Binding ToolNumber}" Width="80"/>
+                <DataGridTextColumn Header="Diameter" Binding="{Binding Diameter, StringFormat={}{0:F3}}" Width="100"/>
+                <DataGridTextColumn Header="Shape" Binding="{Binding Shape}" Width="100"/>
+                <DataGridTextColumn Header="Plating" Binding="{Binding PlatingStatus}" Width="100"/>
+                <DataGridTextColumn Header="Hit Count" Binding="{Binding HitCount}" Width="100"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="2" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <TextBlock>
+                <Run Text="Total: "/>
+                <Run Text="{Binding TotalTools}"/>
+                <Run Text=" drill tools"/>
+            </TextBlock>
+        </Border>
+    </Grid>
+</UserControl>

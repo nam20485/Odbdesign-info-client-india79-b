@@ -75,10 +75,18 @@ public partial class App : Application
 
     private static void ConfigureServices(IServiceCollection services)
     {
-        // Register all services
+        // Register all OdbDesignInfoClient services (includes Refit, auth, connection, design services)
         services.AddOdbDesignInfoClientServices();
 
-        // Register ViewModels
+        // Register Tab ViewModels as Transient (new instance per request)
+        services.AddTransient<ComponentsTabViewModel>();
+        services.AddTransient<NetsTabViewModel>();
+        services.AddTransient<StackupTabViewModel>();
+        services.AddTransient<DrillToolsTabViewModel>();
+        services.AddTransient<PackagesTabViewModel>();
+        services.AddTransient<PartsTabViewModel>();
+
+        // Register Main ViewModel
         services.AddTransient<MainViewModel>();
 
         // Add logging

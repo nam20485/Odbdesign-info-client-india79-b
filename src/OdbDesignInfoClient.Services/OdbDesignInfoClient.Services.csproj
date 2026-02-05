@@ -34,6 +34,40 @@
     <!-- DI -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="$(MicrosoftExtensionsDIVersion)" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="$(MicrosoftExtensionsDIVersion)" />
+    
+    <!-- JSON Serialization for IPC -->
+    <PackageReference Include="System.Text.Json" Version="10.0.0-preview.7.25380.108" />
+  </ItemGroup>
+
+  <!-- Proto file compilation for gRPC client generation -->
+  <ItemGroup>
+    <Protobuf Include="..\..\protoc\grpc\service.proto" GrpcServices="Client" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\design.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\featuresfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\symbolname.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\common.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\enums.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\filearchive.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\net.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\package.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\component.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\part.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\pin.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\pinconnection.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\edadatafile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\matrixfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\color.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\stepdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\layerdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\symbolsdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\netlistfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\componentsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\toolsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\stephdrfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\attrlistfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\miscinfofile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\standardfontsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\via.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
   </ItemGroup>
 
 </Project>

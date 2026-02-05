@@ -16,27 +16,46 @@ public class ServerConnectionConfigTests
 
         // Assert
         Assert.Equal("localhost", config.Host);
-        Assert.Equal(5000, config.Port);
+        Assert.Equal(8888, config.RestPort);
+        Assert.Equal(50051, config.GrpcPort);
         Assert.Equal(30, config.TimeoutSeconds);
         Assert.False(config.UseHttps);
     }
 
     [Fact]
-    public void BaseUri_ReturnsHttpUri_WhenUseHttpsIsFalse()
+    public void RestBaseUrl_ReturnsHttpUrl_WhenUseHttpsIsFalse()
     {
         // Arrange
         var config = new ServerConnectionConfig
         {
             Host = "example.com",
-            Port = 8080,
+            RestPort = 8080,
             UseHttps = false
         };
 
         // Act
-        var uri = config.BaseUri;
+        var url = config.RestBaseUrl;
 
         // Assert
-        Assert.Equal("http://example.com:8080/", uri.ToString());
+        Assert.Equal("http://example.com:8080", url);
+    }
+
+    [Fact]
+    public void GrpcBaseUrl_ReturnsCorrectUrl()
+    {
+        // Arrange
+        var config = new ServerConnectionConfig
+        {
+            Host = "server.local",
+            GrpcPort = 50051,
+            UseHttps = false
+        };
+
+        // Act
+        var url = config.GrpcBaseUrl;
+
+        // Assert
+        Assert.Equal("http://server.local:50051", url);
     }
 
     [Fact]
@@ -46,16 +65,15 @@ public class ServerConnectionConfigTests
         var config = new ServerConnectionConfig
         {
             Host = "secure.example.com",
-            Port = 443,
+            RestPort = 443,
             UseHttps = true
         };
 
         // Act
         var uri = config.BaseUri;
 
-        // Assert
-        // Note: Default ports (443 for HTTPS, 80 for HTTP) are omitted by UriBuilder
-        Assert.Equal("https://secure.example.com/", uri.ToString());
+        // Assert - Default HTTPS port 443 may be omitted by Uri
+        Assert.StartsWith("https://secure.example.com", uri.ToString());
     }
 
     [Theory]

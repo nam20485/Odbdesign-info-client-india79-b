@@ -11,9 +11,14 @@ public record ServerConnectionConfig
     public string Host { get; init; } = "localhost";
 
     /// <summary>
-    /// Gets or sets the server port.
+    /// Gets or sets the REST API port (default: 8888).
     /// </summary>
-    public int Port { get; init; } = 5000;
+    public int RestPort { get; init; } = 8888;
+
+    /// <summary>
+    /// Gets or sets the gRPC port (default: 50051).
+    /// </summary>
+    public int GrpcPort { get; init; } = 50051;
 
     /// <summary>
     /// Gets or sets the timeout in seconds.
@@ -21,14 +26,24 @@ public record ServerConnectionConfig
     public int TimeoutSeconds { get; init; } = 30;
 
     /// <summary>
-    /// Gets or sets whether to use HTTPS.
+    /// Gets or sets whether to use HTTPS/TLS.
     /// </summary>
     public bool UseHttps { get; init; } = false;
 
     /// <summary>
-    /// Gets the base URI for the server.
+    /// Gets the base URL for REST API.
     /// </summary>
-    public Uri BaseUri => new($"{(UseHttps ? "https" : "http")}://{Host}:{Port}");
+    public string RestBaseUrl => $"{(UseHttps ? "https" : "http")}://{Host}:{RestPort}";
+
+    /// <summary>
+    /// Gets the base URL for gRPC.
+    /// </summary>
+    public string GrpcBaseUrl => $"{(UseHttps ? "https" : "http")}://{Host}:{GrpcPort}";
+
+    /// <summary>
+    /// Gets the base URI for the REST server (for compatibility).
+    /// </summary>
+    public Uri BaseUri => new(RestBaseUrl);
 }
 
 /// <summary>

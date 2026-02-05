@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OdbDesignInfoClient.Core.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="OdbDesignInfoClient.Views.PackagesTabView"
+             x:DataType="vm:PackagesTabViewModel">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- Filter Bar -->
+        <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <Grid ColumnDefinitions="Auto,*,Auto">
+                <TextBlock Grid.Column="0" 
+                           Text="Filter:" 
+                           VerticalAlignment="Center" 
+                           Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" 
+                         Text="{Binding FilterText}"
+                         Watermark="Search by Package Name..."
+                         MinWidth="300"/>
+                <Button Grid.Column="2" 
+                        Content="Refresh" 
+                        Command="{Binding RefreshCommand}"
+                        Margin="8,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Loading Overlay -->
+        <Border Grid.Row="1" 
+                IsVisible="{Binding IsLoading}"
+                Background="#80000000"
+                ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading packages..." 
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Data Grid -->
+        <DataGrid Grid.Row="1"
+                  ItemsSource="{Binding Packages}"
+                  SelectedItem="{Binding SelectedPackage}"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Package Name" Binding="{Binding Name}" Width="200"/>
+                <DataGridTextColumn Header="Pitch" Binding="{Binding Pitch, StringFormat={}{0:F3}}" Width="100"/>
+                <DataGridTextColumn Header="Pins" Binding="{Binding PinCount}" Width="80"/>
+                <DataGridTextColumn Header="Dimensions" Binding="{Binding Dimensions}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="2" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Showing "/>
+                <TextBlock Text="{Binding FilteredCount}"/>
+                <TextBlock Text=" of "/>
+                <TextBlock Text="{Binding TotalCount}"/>
+                <TextBlock Text=" packages"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

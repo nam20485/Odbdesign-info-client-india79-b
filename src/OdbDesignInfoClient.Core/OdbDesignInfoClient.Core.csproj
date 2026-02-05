@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>OdbDesignInfoClient.Core</RootNamespace>
+    <AssemblyName>OdbDesignInfoClient.Core</AssemblyName>
+    <Description>Core business logic, models, ViewModels, and service interfaces for OdbDesignInfoClient</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- MVVM Framework -->
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="$(CommunityToolkitMvvmVersion)" />
+    
+    <!-- Dependency Injection -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="$(MicrosoftExtensionsDIVersion)" />
+    
+    <!-- Logging Abstractions -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="$(MicrosoftExtensionsDIVersion)" />
+    
+    <!-- Resiliency -->
+    <PackageReference Include="Polly" Version="$(PollyVersion)" />
+  </ItemGroup>
+
+</Project>

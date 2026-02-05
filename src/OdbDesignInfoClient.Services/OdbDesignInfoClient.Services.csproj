@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>OdbDesignInfoClient.Services</RootNamespace>
+    <AssemblyName>OdbDesignInfoClient.Services</AssemblyName>
+    <Description>Service implementations for OdbDesignInfoClient including API clients and IPC</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Project Reference -->
+    <ProjectReference Include="..\OdbDesignInfoClient.Core\OdbDesignInfoClient.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- REST API Client -->
+    <PackageReference Include="Refit" Version="$(RefitVersion)" />
+    <PackageReference Include="Refit.HttpClientFactory" Version="$(RefitVersion)" />
+    
+    <!-- gRPC Client -->
+    <PackageReference Include="Grpc.Net.Client" Version="$(GrpcNetClientVersion)" />
+    <PackageReference Include="Google.Protobuf" Version="$(GoogleProtobufVersion)" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    
+    <!-- Logging -->
+    <PackageReference Include="Serilog" Version="$(SerilogVersion)" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    
+    <!-- DI -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="$(MicrosoftExtensionsDIVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="$(MicrosoftExtensionsDIVersion)" />
+  </ItemGroup>
+
+</Project>

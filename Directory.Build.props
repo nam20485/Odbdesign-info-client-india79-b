@@ -1,0 +1,62 @@
+<Project>
+  <!-- Shared properties for all projects in the solution -->
+  <PropertyGroup>
+    <!-- Target Framework -->
+    <TargetFramework>net10.0</TargetFramework>
+    
+    <!-- Language Settings -->
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    
+    <!-- Code Quality -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    
+    <!-- Build Settings -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    
+    <!-- Package Metadata -->
+    <Authors>nam20485</Authors>
+    <Company>OdbDesign</Company>
+    <Product>OdbDesignInfoClient</Product>
+    <Copyright>Copyright (c) 2025-2026</Copyright>
+    <RepositoryType>git</RepositoryType>
+    <RepositoryUrl>https://github.com/nam20485/Odbdesign-info-client</RepositoryUrl>
+  </PropertyGroup>
+
+  <!-- Central Package Version Management -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+    
+    <!-- Core Versions - Avalonia 11.1.x (pre-licensing) -->
+    <AvaloniaVersion>11.1.5</AvaloniaVersion>
+    <CommunityToolkitMvvmVersion>8.4.0</CommunityToolkitMvvmVersion>
+    
+    <!-- Network/API Versions -->
+    <RefitVersion>8.0.0</RefitVersion>
+    <GrpcNetClientVersion>2.67.0</GrpcNetClientVersion>
+    <GoogleProtobufVersion>3.29.3</GoogleProtobufVersion>
+    
+    <!-- Infrastructure Versions -->
+    <MicrosoftExtensionsDIVersion>10.0.0-preview.7.25380.108</MicrosoftExtensionsDIVersion>
+    <SerilogVersion>4.2.0</SerilogVersion>
+    <PollyVersion>8.5.2</PollyVersion>
+    
+    <!-- Testing Versions -->
+    <XunitVersion>2.9.3</XunitVersion>
+    <MoqVersion>4.20.72</MoqVersion>
+    <TestContainersVersion>4.2.0</TestContainersVersion>
+  </PropertyGroup>
+
+  <!-- Source Link for debugging -->
+  <PropertyGroup>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+</Project>

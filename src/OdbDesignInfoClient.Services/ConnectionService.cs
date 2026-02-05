@@ -63,7 +63,12 @@ public class ConnectionService : IConnectionService, IDisposable
             .Handle<Exception>()
             .WaitAndRetryAsync(
                 retryCount: 3,
-                sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt)),
+                sleepDurationProvider: attempt =>
+                {
+                    var delay = Math.Pow(2, attempt);
+                    var maxDelay = 10.0; // Cap at 10 seconds
+                    return TimeSpan.FromSeconds(Math.Min(delay, maxDelay));
+                },
                 onRetry: (exception, timeSpan, retryCount, context) =>
                 {
                     _logger?.LogWarning(exception, 
@@ -199,7 +204,7 @@ public class ConnectionService : IConnectionService, IDisposable
 
     private async Task MonitorHealthAsync(CancellationToken cancellationToken)
     {
-        var reconnectDelay = TimeSpan.FromSeconds(1);
+        var reconnectDelay = TimeSpan.FromSeconds(5); // Initial delay before first reconnection
         var maxReconnectDelay = TimeSpan.FromSeconds(30);
 
         while (!cancellationToken.IsCancellationRequested)
@@ -215,25 +220,28 @@ public class ConnectionService : IConnectionService, IDisposable
                     {
                         _logger?.LogWarning("Health check failed. Attempting to reconnect...");
                         SetState(ConnectionState.Reconnecting);
-                        reconnectDelay = TimeSpan.FromSeconds(1);
+                        reconnectDelay = TimeSpan.FromSeconds(5); // Reset delay
                     }
                 }
                 else if (_state == ConnectionState.Reconnecting)
                 {
+                    // Initial delay before attempting reconnection
+                    await Task.Delay(reconnectDelay, cancellationToken);
+                    
                     var isHealthy = await CheckHealthAsync(cancellationToken);
                     if (isHealthy)
                     {
                         await InitializeGrpcAsync(_configuration, cancellationToken);
                         SetState(ConnectionState.Connected);
                         _logger?.LogInformation("Reconnected to server");
-                        reconnectDelay = TimeSpan.FromSeconds(1);
+                        reconnectDelay = TimeSpan.FromSeconds(5);
                     }
                     else
                     {
-                        await Task.Delay(reconnectDelay, cancellationToken);
                         reconnectDelay = TimeSpan.FromSeconds(
                             Math.Min(reconnectDelay.TotalSeconds * 2, maxReconnectDelay.TotalSeconds));
                     }
+                }
                 }
             }
             catch (OperationCanceledException)
@@ -261,8 +269,8 @@ public class ConnectionService : IConnectionService, IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (Interlocked.Exchange(ref _disposed, true))
+            return;
 
         StopHealthMonitoring();
         _grpcChannel?.Dispose();

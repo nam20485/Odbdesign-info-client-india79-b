@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Odb.Grpc;
 using OdbDesignInfoClient.Core.Models;
@@ -15,10 +16,13 @@ public class DesignService : IDesignService
     private readonly IConnectionService _connectionService;
     private readonly IOdbDesignRestApi _restApi;
 
-    private readonly Dictionary<string, Design> _designCache = new();
-    private readonly Dictionary<string, IReadOnlyList<Component>> _componentCache = new();
-    private readonly Dictionary<string, IReadOnlyList<Net>> _netCache = new();
-    private DateTime _lastCacheRefresh = DateTime.MinValue;
+    private readonly ConcurrentDictionary<string, Design> _designCache = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<Component>> _componentCache = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<Net>> _netCache = new();
+    
+    private DateTime _designCacheRefresh = DateTime.MinValue;
+    private DateTime _componentCacheRefresh = DateTime.MinValue;
+    private DateTime _netCacheRefresh = DateTime.MinValue;
     private readonly TimeSpan _cacheExpiration = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -34,8 +38,6 @@ public class DesignService : IDesignService
         _logger = logger;
     }
 
-    private ConnectionService? ConnectionServiceImpl => _connectionService as ConnectionService;
-
     /// <inheritdoc />
     public async Task<IReadOnlyList<Design>> GetDesignsAsync(CancellationToken cancellationToken = default)
     {
@@ -48,7 +50,7 @@ public class DesignService : IDesignService
 
             foreach (var name in designNames)
             {
-                if (_designCache.TryGetValue(name, out var cached) && !IsCacheExpired())
+                if (_designCache.TryGetValue(name, out var cached) && !IsDesignCacheExpired())
                 {
                     designs.Add(cached);
                     continue;
@@ -68,7 +70,7 @@ public class DesignService : IDesignService
                 designs.Add(design);
             }
 
-            _lastCacheRefresh = DateTime.Now;
+            _designCacheRefresh = DateTime.Now;
             return designs;
         }
         catch (Exception ex)
@@ -83,7 +85,7 @@ public class DesignService : IDesignService
     {
         _logger?.LogInformation("Getting design {DesignId} from server", designId);
 
-        if (_designCache.TryGetValue(designId, out var cached) && !IsCacheExpired())
+        if (_designCache.TryGetValue(designId, out var cached) && !IsDesignCacheExpired())
         {
             return cached;
         }
@@ -119,16 +121,16 @@ public class DesignService : IDesignService
         _logger?.LogInformation("Getting components for design {DesignId}, step {StepName}", designId, stepName);
 
         var cacheKey = $"{designId}:{stepName}:components";
-        if (_componentCache.TryGetValue(cacheKey, out var cached) && !IsCacheExpired())
+        if (_componentCache.TryGetValue(cacheKey, out var cached) && !IsComponentCacheExpired())
         {
             return cached;
         }
 
         try
         {
-            var components = new List<Component>();
+            List<Component> components;
 
-            if (ConnectionServiceImpl?.IsGrpcAvailable == true && ConnectionServiceImpl?.GrpcClient != null)
+            if (_connectionService.IsGrpcAvailable)
             {
                 components = await GetComponentsViaGrpcAsync(designId, cancellationToken);
             }
@@ -150,7 +152,22 @@ public class DesignService : IDesignService
     private async Task<List<Component>> GetComponentsViaGrpcAsync(string designId, CancellationToken cancellationToken)
     {
         var components = new List<Component>();
-        var grpcClient = ConnectionServiceImpl!.GrpcClient!;
+        
+        if (!_connectionService.IsGrpcAvailable)
+        {
+            return await GetComponentsViaRestAsync(designId, cancellationToken);
+        }
+        
+        if (_connectionService is not ConnectionService connectionServiceImpl)
+        {
+            throw new InvalidOperationException("ConnectionService implementation is required for gRPC access");
+        }
+        
+        var grpcClient = connectionServiceImpl.GrpcClient;
+        if (grpcClient == null)
+        {
+            return await GetComponentsViaRestAsync(designId, cancellationToken);
+        }
 
         try
         {
@@ -176,22 +193,9 @@ public class DesignService : IDesignService
 
     private async Task<List<Component>> GetComponentsViaRestAsync(string designId, CancellationToken cancellationToken)
     {
-        var components = new List<Component>();
-
-        try
-        {
-            var response = await _restApi.GetComponentsAsync(designId, cancellationToken);
-            if (response.IsSuccessStatusCode && response.Content != null)
-            {
-                _logger?.LogInformation("Components REST response received (raw JSON parsing not implemented yet)");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "REST component fetch failed");
-        }
-
-        return components;
+        // REST API parsing not implemented yet
+        _logger?.LogWarning("REST API for components is not implemented yet");
+        throw new NotImplementedException("REST API component parsing not yet implemented. Use gRPC.");
     }
 
     /// <inheritdoc />
@@ -203,16 +207,16 @@ public class DesignService : IDesignService
         _logger?.LogInformation("Getting nets for design {DesignId}, step {StepName}", designId, stepName);
 
         var cacheKey = $"{designId}:{stepName}:nets";
-        if (_netCache.TryGetValue(cacheKey, out var cached) && !IsCacheExpired())
+        if (_netCache.TryGetValue(cacheKey, out var cached) && !IsNetCacheExpired())
         {
             return cached;
         }
 
         try
         {
-            var nets = new List<Net>();
+            List<Net> nets;
 
-            if (ConnectionServiceImpl?.IsGrpcAvailable == true && ConnectionServiceImpl?.GrpcClient != null)
+            if (_connectionService.IsGrpcAvailable)
             {
                 nets = await GetNetsViaGrpcAsync(designId, cancellationToken);
             }
@@ -234,7 +238,22 @@ public class DesignService : IDesignService
     private async Task<List<Net>> GetNetsViaGrpcAsync(string designId, CancellationToken cancellationToken)
     {
         var nets = new List<Net>();
-        var grpcClient = ConnectionServiceImpl!.GrpcClient!;
+        
+        if (!_connectionService.IsGrpcAvailable)
+        {
+            return await GetNetsViaRestAsync(designId, cancellationToken);
+        }
+        
+        if (_connectionService is not ConnectionService connectionServiceImpl)
+        {
+            throw new InvalidOperationException("ConnectionService implementation is required for gRPC access");
+        }
+        
+        var grpcClient = connectionServiceImpl.GrpcClient;
+        if (grpcClient == null)
+        {
+            return await GetNetsViaRestAsync(designId, cancellationToken);
+        }
 
         try
         {
@@ -260,22 +279,9 @@ public class DesignService : IDesignService
 
     private async Task<List<Net>> GetNetsViaRestAsync(string designId, CancellationToken cancellationToken)
     {
-        var nets = new List<Net>();
-
-        try
-        {
-            var response = await _restApi.GetNetsAsync(designId, cancellationToken);
-            if (response.IsSuccessStatusCode && response.Content != null)
-            {
-                _logger?.LogInformation("Nets REST response received (raw JSON parsing not implemented yet)");
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "REST net fetch failed");
-        }
-
-        return nets;
+        // REST API parsing not implemented yet
+        _logger?.LogWarning("REST API for nets is not implemented yet");
+        throw new NotImplementedException("REST API net parsing not yet implemented. Use gRPC.");
     }
 
     /// <inheritdoc />
@@ -308,6 +314,10 @@ public class DesignService : IDesignService
 
     private static Component MapProtobufComponent(Odb.Lib.Protobuf.ProductModel.Component proto)
     {
+        // Map position and rotation from protobuf if available, falling back to 0 when missing
+        var rotation = proto.Rotation;
+        var x = proto.CenterPoint?.X ?? 0;
+        var y = proto.CenterPoint?.Y ?? 0;
         var pins = new List<Pin>();
 
         return new Component
@@ -316,9 +326,9 @@ public class DesignService : IDesignService
             PartName = proto.PartName ?? string.Empty,
             Package = proto.Package?.Name ?? string.Empty,
             Side = proto.Side == Odb.Lib.Protobuf.BoardSide.Top ? "Top" : "Bottom",
-            Rotation = 0,
-            X = 0,
-            Y = 0,
+            Rotation = rotation,
+            X = x,
+            Y = y,
             Pins = pins
         };
     }
@@ -364,10 +374,9 @@ public class DesignService : IDesignService
         return "Signal";
     }
 
-    private bool IsCacheExpired()
-    {
-        return DateTime.Now - _lastCacheRefresh > _cacheExpiration;
-    }
+    private bool IsDesignCacheExpired() => DateTime.Now - _designCacheRefresh > _cacheExpiration;
+    private bool IsComponentCacheExpired() => DateTime.Now - _componentCacheRefresh > _cacheExpiration;
+    private bool IsNetCacheExpired() => DateTime.Now - _netCacheRefresh > _cacheExpiration;
 
     /// <summary>
     /// Clears all cached data.
@@ -377,6 +386,8 @@ public class DesignService : IDesignService
         _designCache.Clear();
         _componentCache.Clear();
         _netCache.Clear();
-        _lastCacheRefresh = DateTime.MinValue;
+        _designCacheRefresh = DateTime.MinValue;
+        _componentCacheRefresh = DateTime.MinValue;
+        _netCacheRefresh = DateTime.MinValue;
     }
 }

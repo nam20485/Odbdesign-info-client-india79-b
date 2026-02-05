@@ -101,18 +101,15 @@ public partial class NetsTabViewModel : ViewModelBase
 
     private void ApplyFilter()
     {
-        Nets.Clear();
-
         var filtered = string.IsNullOrWhiteSpace(FilterText)
             ? _allNets
             : _allNets.Where(n =>
                 n.Name.Contains(FilterText, StringComparison.OrdinalIgnoreCase)).ToList();
 
-        foreach (var net in filtered)
-        {
-            Nets.Add(new NetRowViewModel(net, _navigationService));
-        }
-
+        var viewModels = filtered.Select(net => 
+            new NetRowViewModel(net, _navigationService)).ToList();
+        
+        Nets = new ObservableCollection<NetRowViewModel>(viewModels);
         FilteredCount = Nets.Count;
     }
 
@@ -120,7 +117,14 @@ public partial class NetsTabViewModel : ViewModelBase
     {
         if (_crossProbeService.IsConnected)
         {
-            await _crossProbeService.HighlightNetAsync(net.Name);
+            try
+            {
+                await _crossProbeService.HighlightNetAsync(net.Name);
+            }
+            catch
+            {
+                // Ignore cross-probe errors - shouldn't block UI interaction
+            }
         }
     }
 

@@ -111,7 +111,7 @@ public partial class PackagesTabViewModel : ViewModelBase
 public partial class PackageRowViewModel : ObservableObject
 {
     [ObservableProperty]
-    private string _name = string.Empty;
+    private readonly string _name = string.Empty;
 
     [ObservableProperty]
     private double _pitch;
@@ -129,7 +129,7 @@ public partial class PackageRowViewModel : ObservableObject
     private bool _isExpanded;
 
     [ObservableProperty]
-    private ObservableCollection<PackageUsageRowViewModel> _usages = [];
+    private readonly ObservableCollection<PackageUsageRowViewModel> _usages = [];
 
     /// <summary>
     /// Gets the dimensions as a formatted string.
@@ -145,10 +145,10 @@ public partial class PackageUsageRowViewModel : ObservableObject
     private readonly INavigationService _navigationService;
 
     [ObservableProperty]
-    private string _componentRefDes = string.Empty;
+    private readonly string _componentRefDes = string.Empty;
 
     [ObservableProperty]
-    private string _partName = string.Empty;
+    private readonly string _partName = string.Empty;
 
     /// <summary>
     /// Initializes a new instance of PackageUsageRowViewModel.

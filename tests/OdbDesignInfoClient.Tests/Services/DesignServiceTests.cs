@@ -64,6 +64,11 @@ public class DesignServiceTests
     {
         // Arrange
         _mockConnectionService.Setup(x => x.IsGrpcAvailable).Returns(false);
+        _mockRestApi.Setup(x => x.GetComponentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]")
+            });
 
         // Act
         var result = await _sut.GetComponentsAsync("design-1", "pcb");
@@ -78,6 +83,11 @@ public class DesignServiceTests
     {
         // Arrange
         _mockConnectionService.Setup(x => x.IsGrpcAvailable).Returns(false);
+        _mockRestApi.Setup(x => x.GetNetsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent("[]")
+            });
 
         // Act
         var result = await _sut.GetNetsAsync("design-1", "pcb");

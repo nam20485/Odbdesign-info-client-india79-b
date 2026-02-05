@@ -101,8 +101,6 @@ public partial class ComponentsTabViewModel : ViewModelBase
 
     private void ApplyFilter()
     {
-        Components.Clear();
-
         var filtered = string.IsNullOrWhiteSpace(FilterText)
             ? _allComponents
             : _allComponents.Where(c =>
@@ -110,11 +108,10 @@ public partial class ComponentsTabViewModel : ViewModelBase
                 c.PartName.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
                 c.Package.Contains(FilterText, StringComparison.OrdinalIgnoreCase)).ToList();
 
-        foreach (var component in filtered)
-        {
-            Components.Add(new ComponentRowViewModel(component, _navigationService));
-        }
-
+        var viewModels = filtered.Select(component => 
+            new ComponentRowViewModel(component, _navigationService)).ToList();
+        
+        Components = new ObservableCollection<ComponentRowViewModel>(viewModels);
         FilteredCount = Components.Count;
     }
 
@@ -122,7 +119,14 @@ public partial class ComponentsTabViewModel : ViewModelBase
     {
         if (_crossProbeService.IsConnected)
         {
-            await _crossProbeService.SelectAsync("component", component.RefDes);
+            try
+            {
+                await _crossProbeService.SelectAsync("component", component.RefDes);
+            }
+            catch
+            {
+                // Ignore cross-probe errors - shouldn't block UI interaction
+            }
         }
     }
 

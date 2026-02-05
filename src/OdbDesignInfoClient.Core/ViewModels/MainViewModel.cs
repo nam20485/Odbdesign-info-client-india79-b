@@ -1,3 +1,4 @@
+using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OdbDesignInfoClient.Core.Models;
@@ -8,7 +9,7 @@ namespace OdbDesignInfoClient.Core.ViewModels;
 /// <summary>
 /// Main ViewModel for the application shell.
 /// </summary>
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IConnectionService _connectionService;
     private readonly IDesignService _designService;
@@ -39,24 +40,23 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private bool _isViewerConnected;
 
-    // Tab ViewModels
-    [ObservableProperty]
-    private ComponentsTabViewModel _componentsTab;
+    /// <summary>
+    /// Gets whether the connection is active.
+    /// </summary>
+    public bool IsConnected => ConnectionState == ConnectionState.Connected;
 
-    [ObservableProperty]
-    private NetsTabViewModel _netsTab;
+    /// <summary>
+    /// Gets whether the connection is currently reconnecting.
+    /// </summary>
+    public bool IsReconnecting => ConnectionState == ConnectionState.Reconnecting;
 
-    [ObservableProperty]
-    private StackupTabViewModel _stackupTab;
-
-    [ObservableProperty]
-    private DrillToolsTabViewModel _drillToolsTab;
-
-    [ObservableProperty]
-    private PackagesTabViewModel _packagesTab;
-
-    [ObservableProperty]
-    private PartsTabViewModel _partsTab;
+    // Tab ViewModels - set once on construction, never change
+    public ComponentsTabViewModel ComponentsTab { get; }
+    public NetsTabViewModel NetsTab { get; }
+    public StackupTabViewModel StackupTab { get; }
+    public DrillToolsTabViewModel DrillToolsTab { get; }
+    public PackagesTabViewModel PackagesTab { get; }
+    public PartsTabViewModel PartsTab { get; }
 
     /// <summary>
     /// Initializes a new instance of the MainViewModel.
@@ -78,13 +78,13 @@ public partial class MainViewModel : ObservableObject
         _navigationService = navigationService;
         _crossProbeService = crossProbeService;
 
-        // Initialize tab ViewModels
-        _componentsTab = componentsTab;
-        _netsTab = netsTab;
-        _stackupTab = stackupTab;
-        _drillToolsTab = drillToolsTab;
-        _packagesTab = packagesTab;
-        _partsTab = partsTab;
+        // Initialize tab ViewModels as readonly properties
+        ComponentsTab = componentsTab;
+        NetsTab = netsTab;
+        StackupTab = stackupTab;
+        DrillToolsTab = drillToolsTab;
+        PackagesTab = packagesTab;
+        PartsTab = partsTab;
 
         // Subscribe to connection state changes
         _connectionService.StateChanged += OnConnectionStateChanged;
@@ -97,6 +97,9 @@ public partial class MainViewModel : ObservableObject
     private void OnConnectionStateChanged(object? sender, ConnectionState state)
     {
         ConnectionState = state;
+        OnPropertyChanged(nameof(IsConnected));
+        OnPropertyChanged(nameof(IsReconnecting));
+        
         StatusMessage = state switch
         {
             ConnectionState.Connected => "Connected to server",
@@ -116,16 +119,18 @@ public partial class MainViewModel : ObservableObject
     {
         SelectedTabIndex = e.TabIndex;
 
-        // Handle entity navigation (deep linking)
+        // Handle entity navigation (deep linking) - check if tab has data loaded
         if (!string.IsNullOrEmpty(e.EntityType) && !string.IsNullOrEmpty(e.EntityId))
         {
             switch (e.EntityType.ToLowerInvariant())
             {
                 case "component":
-                    ComponentsTab.NavigateToComponent(e.EntityId);
+                    if (ComponentsTab.TotalCount > 0)
+                        ComponentsTab.NavigateToComponent(e.EntityId);
                     break;
                 case "net":
-                    NetsTab.NavigateToNet(e.EntityId);
+                    if (NetsTab.TotalCount > 0)
+                        NetsTab.NavigateToNet(e.EntityId);
                     break;
             }
         }
@@ -153,8 +158,17 @@ public partial class MainViewModel : ObservableObject
             {
                 await LoadDesignsAsync(cancellationToken);
 
-                // Try to connect to 3D viewer
-                _ = _crossProbeService.ConnectAsync(cancellationToken);
+                // Try to connect to 3D viewer with user notification
+                try
+                {
+                    await _crossProbeService.ConnectAsync(cancellationToken);
+                    StatusMessage = "Connected to server and viewer";
+                }
+                catch (Exception)
+                {
+                    // Viewer is optional - notify user but continue
+                    StatusMessage = "Connected to server (viewer unavailable)";
+                }
             }
         }
         finally
@@ -169,8 +183,17 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task DisconnectAsync()
     {
+        // Disconnect from services - swallow cross-probe exceptions to ensure cleanup always happens
+        try
+        {
+            await _crossProbeService.DisconnectAsync();
+        }
+        catch
+        {
+            // Ignore cross-probe disconnect errors - UI state should still be reset
+        }
+        
         await _connectionService.DisconnectAsync();
-        await _crossProbeService.DisconnectAsync();
         Designs = [];
         SelectedDesign = null;
     }
@@ -216,7 +239,8 @@ public partial class MainViewModel : ObservableObject
         if (value != null)
         {
             StatusMessage = $"Selected design: {value.Name}";
-            _ = LoadTabDataAsync();
+            // Use lazy loading: load data only for the current tab
+            _ = LoadCurrentTabDataAsync();
         }
     }
 
@@ -275,5 +299,23 @@ public partial class MainViewModel : ObservableObject
                 await PartsTab.LoadAsync(designId, stepName, cancellationToken);
                 break;
         }
+    }
+
+    private bool _disposed;
+
+    /// <summary>
+    /// Disposes resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        // Unsubscribe from all events to prevent memory leaks
+        _connectionService.StateChanged -= OnConnectionStateChanged;
+        _crossProbeService.ConnectionChanged -= OnViewerConnectionChanged;
+        _navigationService.Navigated -= OnNavigated;
+
+        GC.SuppressFinalize(this);
     }
 }

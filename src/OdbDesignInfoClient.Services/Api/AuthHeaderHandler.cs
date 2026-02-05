@@ -16,6 +16,14 @@ public class AuthHeaderHandler : DelegatingHandler
     public AuthHeaderHandler(IAuthService authService)
     {
         _authService = authService;
+        
+        // Ensure there is always a terminal handler in the pipeline when this handler
+        // is instantiated directly, while still allowing DI/HttpClientFactory to
+        // overwrite InnerHandler when it builds the handler chain.
+        if (InnerHandler == null)
+        {
+            InnerHandler = new HttpClientHandler();
+        }
     }
 
     /// <inheritdoc />

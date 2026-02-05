@@ -14,7 +14,9 @@ public static class ServiceCollectionExtensions
     /// Registers all OdbDesignInfoClient services.
     /// </summary>
     /// <param name="services">The service collection.</param>
-    /// <param name="restBaseUrl">The base URL for REST API (default: http://localhost:8888).</param>
+    /// <param name="restBaseUrl">The base URL for REST API (default: http://localhost:8888).
+    /// WARNING: Production deployments should override this value via environment variables or appsettings.json.
+    /// Configuration precedence: Environment Variables > appsettings.json > parameter default.</param>
     /// <returns>The service collection for chaining.</returns>
     public static IServiceCollection AddOdbDesignInfoClientServices(
         this IServiceCollection services,

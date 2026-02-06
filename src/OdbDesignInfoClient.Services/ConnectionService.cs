@@ -26,7 +26,7 @@ public class ConnectionService : IConnectionService, IDisposable
     private CancellationTokenSource? _healthMonitorCts;
     private Task? _healthMonitorTask;
     private bool _grpcAvailable;
-    private bool _disposed;
+    private int _disposed; // 0 = false, 1 = true (for Interlocked.Exchange)
 
     private readonly AsyncRetryPolicy _retryPolicy;
 
@@ -268,7 +268,7 @@ public class ConnectionService : IConnectionService, IDisposable
     /// <inheritdoc />
     public void Dispose()
     {
-        if (Interlocked.Exchange(ref _disposed, true))
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
             return;
 
         StopHealthMonitoring();

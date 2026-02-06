@@ -152,8 +152,6 @@ public class DesignService : IDesignService
 
         try
         {
-            List<Component> components;
-
             var components = await (_connectionService.IsGrpcAvailable
                 ? GetComponentsViaGrpcAsync(designId, cancellationToken)
                 : GetComponentsViaRestAsync(designId, cancellationToken));

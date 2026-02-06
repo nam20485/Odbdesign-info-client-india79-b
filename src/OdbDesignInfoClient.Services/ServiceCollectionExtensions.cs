@@ -44,7 +44,7 @@ public static class ServiceCollectionExtensions
                     .HandleTransientHttpError()
                     .WaitAndRetryAsync(
                         retryCount: 3,
-                        sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)),
+                        sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt - 1), 30)),
                         onRetry: (outcome, timespan, attempt, _) =>
                         {
                             logger?.LogWarning(

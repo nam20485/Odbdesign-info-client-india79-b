@@ -23,6 +23,11 @@ public class DesignService : IDesignService
     /// <summary>
     /// JSON serializer options configured for protobuf-generated JSON (camelCase).
     /// </summary>
+    /// <remarks>
+    /// PropertyNamingPolicy is set to CamelCase to match the protobuf MessageToJsonString() output format.
+    /// This ensures consistent deserialization of REST API responses regardless of server configuration.
+    /// Combined with PropertyNameCaseInsensitive=true for defensive parsing of case variations.
+    /// </remarks>
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -524,10 +529,21 @@ public class DesignService : IDesignService
     }
 
     /// <summary>
-    /// Maps protobuf BoardSide enum string to display string.
+    /// Maps protobuf BoardSide enum string values to display-friendly strings.
+    /// Uses case-insensitive matching to handle variations in protobuf JSON serialization.
     /// </summary>
-    /// <param name="side">The side string from JSON ("TOP", "BOTTOM", "BS_NONE", or null).</param>
-    /// <returns>Display string ("Top", "Bottom", or empty).</returns>
+    /// <param name="side">
+    /// The BoardSide enum value as a string, which may be in different cases
+    /// (e.g., "TOP", "Top", or "top") depending on the server's protobuf JSON serializer configuration.
+    /// </param>
+    /// <returns>
+    /// A display-friendly string: "Top" for TOP, "Bottom" for BOTTOM, or empty string for BS_NONE/unknown values.
+    /// </returns>
+    /// <remarks>
+    /// The ToUpperInvariant() normalization is necessary because protobuf-generated JSON may produce
+    /// enum values in different cases depending on serializer settings (JsonStringEnumConverter,
+    /// naming policies, etc.). This ensures consistent mapping regardless of server configuration.
+    /// </remarks>
     private static string MapBoardSide(string? side)
     {
         return side?.ToUpperInvariant() switch

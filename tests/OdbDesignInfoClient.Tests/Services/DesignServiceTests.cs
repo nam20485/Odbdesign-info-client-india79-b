@@ -209,6 +209,36 @@ public class DesignServiceTests
     }
 
     [Fact]
+    public async Task GetComponentsAsync_ThrowsInvalidOperationException_WhenServerErrors()
+    {
+        // Arrange
+        var response = CreateErrorResponse(HttpStatusCode.InternalServerError);
+        _mockRestApi
+            .Setup(x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await _sut.GetComponentsAsync("design-1", "pcb"));
+        Assert.Contains("Server error", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetComponentsAsync_ThrowsWithJsonDetails_OnMalformedJson()
+    {
+        // Arrange - Invalid JSON with unmatched braces
+        var response = CreateSuccessResponse("{ \"refDes\": \"U1\", ");
+        _mockRestApi
+            .Setup(x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await _sut.GetComponentsAsync("design-1", "pcb"));
+        Assert.Contains("Failed to parse components response", ex.Message);
+    }
+
+    [Fact]
     public async Task GetComponentsAsync_HandlesMissingOptionalFields_Gracefully()
     {
         // Arrange - Component with minimal fields
@@ -328,6 +358,76 @@ public class DesignServiceTests
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             async () => await _sut.GetNetsAsync("unknown-design", "pcb"));
         Assert.Contains("not found", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetNetsAsync_ThrowsUnauthorizedAccessException_OnAuthFailure()
+    {
+        // Arrange
+        var response = CreateErrorResponse(HttpStatusCode.Unauthorized);
+        _mockRestApi
+            .Setup(x => x.GetNetsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            async () => await _sut.GetNetsAsync("design-1", "pcb"));
+    }
+
+    [Fact]
+    public async Task GetNetsAsync_ThrowsInvalidOperationException_WhenServerErrors()
+    {
+        // Arrange
+        var response = CreateErrorResponse(HttpStatusCode.InternalServerError);
+        _mockRestApi
+            .Setup(x => x.GetNetsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act & Assert
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await _sut.GetNetsAsync("design-1", "pcb"));
+        Assert.Contains("Server error", ex.Message);
+    }
+
+    [Fact]
+    public async Task GetNetsAsync_ThrowsInvalidOperationException_OnMalformedJson()
+    {
+        // Arrange
+        var response = CreateSuccessResponse("{ invalid json }");
+        _mockRestApi
+            .Setup(x => x.GetNetsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            async () => await _sut.GetNetsAsync("design-1", "pcb"));
+    }
+
+    [Fact]
+    public async Task GetNetsAsync_HandlesMissingOptionalFields_Gracefully()
+    {
+        // Arrange - Net with minimal fields
+        var minimalJson = """
+            [
+              {
+                "name": "NET1"
+              }
+            ]
+            """;
+        var response = CreateSuccessResponse(minimalJson);
+        _mockRestApi
+            .Setup(x => x.GetNetsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act
+        var result = await _sut.GetNetsAsync("design-1", "pcb");
+
+        // Assert
+        Assert.Single(result);
+        var net = result[0];
+        Assert.Equal("NET1", net.Name);
+        Assert.Equal(0, net.PinCount);
+        Assert.Empty(net.Features);
     }
 
     [Fact]

@@ -12,7 +12,7 @@ public interface IOdbDesignRestApi
     /// Gets the list of all available design names.
     /// </summary>
     [Get("/filemodels")]
-    Task<List<string>> GetDesignNamesAsync(CancellationToken cancellationToken = default);
+    Task<ApiResponse<string>> GetDesignNamesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the full design details including steps, layers, and symbols.
@@ -24,7 +24,7 @@ public interface IOdbDesignRestApi
     /// Gets the list of steps for a design.
     /// </summary>
     [Get("/filemodels/{name}/steps")]
-    Task<List<string>> GetStepsAsync(string name, CancellationToken cancellationToken = default);
+    Task<ApiResponse<string>> GetStepsAsync(string name, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the list of layers for a step.

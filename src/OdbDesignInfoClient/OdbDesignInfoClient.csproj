@@ -31,6 +31,11 @@
     <!-- DI -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="$(MicrosoftExtensionsDIVersion)" />
     
+    <!-- Configuration -->
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="$(MicrosoftExtensionsDIVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="$(MicrosoftExtensionsDIVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="$(MicrosoftExtensionsDIVersion)" />
+    
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="$(SerilogVersion)" />
     <PackageReference Include="Serilog.Extensions.Hosting" Version="9.0.0" />
@@ -40,6 +45,12 @@
 
   <ItemGroup>
     <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

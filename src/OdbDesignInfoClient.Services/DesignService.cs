@@ -69,10 +69,79 @@ public class DesignService : IDesignService
 
         try
         {
-            var designNames = await _restApi.GetDesignNamesAsync(cancellationToken);
-            var designs = new List<Design>();
+            var response = await _restApi.GetDesignNamesAsync(cancellationToken);
+            
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger?.LogError(
+                    "Failed to get design names. Status: {StatusCode}, Content: {Content}",
+                    response.StatusCode,
+                    response.Content);
+                return [];
+            }
 
-            foreach (var name in designNames)
+            if (string.IsNullOrWhiteSpace(response.Content))
+            {
+                _logger?.LogWarning("REST API returned empty content for design names");
+                return [];
+            }
+
+            _logger?.LogDebug("Raw response from /filemodels: {Content}", response.Content);
+
+            List<(string Name, bool Loaded)> designInfos;
+            
+            try
+            {
+                // Parse the response which has structure: { "filearchives": [...] }
+                using var doc = JsonDocument.Parse(response.Content);
+                var root = doc.RootElement;
+                
+                if (root.TryGetProperty("filearchives", out var filearchivesArray))
+                {
+                    designInfos = filearchivesArray.EnumerateArray()
+                        .Select(item =>
+                        {
+                            var name = string.Empty;
+                            var loaded = false;
+                            
+                            if (item.TryGetProperty("name", out var nameElement))
+                            {
+                                name = nameElement.GetString() ?? string.Empty;
+                            }
+                            
+                            if (item.TryGetProperty("loaded", out var loadedElement))
+                            {
+                                loaded = loadedElement.GetBoolean();
+                            }
+                            
+                            return (Name: name, Loaded: loaded);
+                        })
+                        .Where(item => !string.IsNullOrEmpty(item.Name))
+                        .ToList();
+                }
+                else
+                {
+                    _logger?.LogError("Unable to find 'filearchives' property in response");
+                    return [];
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger?.LogError(ex, "Failed to parse design names from response");
+                return [];
+            }
+
+            if (designInfos.Count == 0)
+            {
+                _logger?.LogInformation("No designs found on server");
+                return [];
+            }
+
+            var designs = new List<Design>();
+            var failedDesigns = new List<string>();
+            var skippedDesigns = new List<string>();
+
+            foreach (var (name, loaded) in designInfos)
             {
                 if (_designCache.TryGetValue(name, out var cached) && !IsDesignCacheExpired())
                 {
@@ -80,21 +149,91 @@ public class DesignService : IDesignService
                     continue;
                 }
 
-                var steps = await _restApi.GetStepsAsync(name, cancellationToken);
-                var design = new Design
+                // Skip designs that aren't loaded on the server
+                if (!loaded)
                 {
-                    Id = name,
-                    Name = name,
-                    Path = $"/filemodels/{name}",
-                    LoadedDate = DateTime.Now,
-                    Steps = steps
-                };
+                    _logger?.LogDebug("Skipping design '{DesignName}' - not loaded on server", name);
+                    skippedDesigns.Add(name);
+                    continue;
+                }
 
-                _designCache[name] = design;
-                designs.Add(design);
+                try
+                {
+                    var stepsResponse = await _restApi.GetStepsAsync(name, cancellationToken);
+                    
+                    if (!stepsResponse.IsSuccessStatusCode)
+                    {
+                        _logger?.LogWarning(
+                            "Failed to get steps for design '{DesignName}'. Status: {StatusCode}",
+                            name,
+                            stepsResponse.StatusCode);
+                        failedDesigns.Add(name);
+                        continue;
+                    }
+
+                    List<string> steps;
+                    try
+                    {
+                        // Try to parse as a simple array first
+                        steps = JsonSerializer.Deserialize<List<string>>(stepsResponse.Content ?? "[]", JsonOptions) ?? [];
+                    }
+                    catch (JsonException)
+                    {
+                        // If that fails, try to extract from object structure
+                        using var doc = JsonDocument.Parse(stepsResponse.Content ?? "{}");
+                        var root = doc.RootElement;
+                        
+                        if (root.TryGetProperty("steps", out var stepsArray))
+                        {
+                            steps = stepsArray.EnumerateArray()
+                                .Select(e => e.GetString() ?? string.Empty)
+                                .Where(s => !string.IsNullOrEmpty(s))
+                                .ToList();
+                        }
+                        else
+                        {
+                            _logger?.LogWarning("Unable to parse steps from response for design '{DesignName}'", name);
+                            steps = [];
+                        }
+                    }
+                    
+                    var design = new Design
+                    {
+                        Id = name,
+                        Name = name,
+                        Path = $"/filemodels/{name}",
+                        LoadedDate = DateTime.Now,
+                        Steps = steps
+                    };
+
+                    _designCache[name] = design;
+                    designs.Add(design);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Failed to load design '{DesignName}', skipping", name);
+                    failedDesigns.Add(name);
+                    // Continue to next design instead of throwing
+                }
             }
 
             _designCacheRefresh = DateTime.Now;
+            
+            if (failedDesigns.Count > 0 || skippedDesigns.Count > 0)
+            {
+                _logger?.LogInformation(
+                    "Successfully loaded {SuccessCount}/{TotalCount} designs. Skipped {SkipCount} not loaded on server. {FailCount} failed: {FailedDesigns}",
+                    designs.Count,
+                    designInfos.Count,
+                    skippedDesigns.Count,
+                    failedDesigns.Count,
+                    failedDesigns.Count > 0 ? string.Join(", ", failedDesigns) : "none");
+            }
+            else
+            {
+                _logger?.LogInformation("Successfully loaded {Count}/{Total} designs", designs.Count, designInfos.Count);
+            }
+            
             return designs;
         }
         catch (Exception ex)
@@ -116,7 +255,41 @@ public class DesignService : IDesignService
 
         try
         {
-            var steps = await _restApi.GetStepsAsync(designId, cancellationToken);
+            var stepsResponse = await _restApi.GetStepsAsync(designId, cancellationToken);
+            
+            if (!stepsResponse.IsSuccessStatusCode)
+            {
+                _logger?.LogError(
+                    "Failed to get steps for design '{DesignId}'. Status: {StatusCode}",
+                    designId,
+                    stepsResponse.StatusCode);
+                return null;
+            }
+
+            List<string> steps;
+            try
+            {
+                steps = JsonSerializer.Deserialize<List<string>>(stepsResponse.Content ?? "[]", JsonOptions) ?? [];
+            }
+            catch (JsonException)
+            {
+                using var doc = JsonDocument.Parse(stepsResponse.Content ?? "{}");
+                var root = doc.RootElement;
+                
+                if (root.TryGetProperty("steps", out var stepsArray))
+                {
+                    steps = stepsArray.EnumerateArray()
+                        .Select(e => e.GetString() ?? string.Empty)
+                        .Where(s => !string.IsNullOrEmpty(s))
+                        .ToList();
+                }
+                else
+                {
+                    _logger?.LogWarning("Unable to parse steps from response for design '{DesignId}'", designId);
+                    steps = [];
+                }
+            }
+            
             var design = new Design
             {
                 Id = designId,

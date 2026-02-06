@@ -180,7 +180,7 @@ public class DesignServiceTests
     }
 
     [Fact]
-    public async Task GetComponentsAsync_ThrowsInvalidOperationException_WhenDesignNotFound()
+    public async Task GetComponentsAsync_ReturnsEmptyList_WhenDesignNotFound()
     {
         // Arrange
         var response = CreateErrorResponse(HttpStatusCode.NotFound);
@@ -188,10 +188,11 @@ public class DesignServiceTests
             .Setup(x => x.GetComponentsAsync("unknown-design", It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await _sut.GetComponentsAsync("unknown-design", "pcb"));
-        Assert.Contains("not found", ex.Message);
+        // Act
+        var result = await _sut.GetComponentsAsync("unknown-design", "pcb");
+
+        // Assert — 404 now returns empty list for graceful UX
+        Assert.Empty(result);
     }
 
     [Fact]
@@ -346,7 +347,7 @@ public class DesignServiceTests
     }
 
     [Fact]
-    public async Task GetNetsAsync_ThrowsInvalidOperationException_WhenDesignNotFound()
+    public async Task GetNetsAsync_ReturnsEmptyList_WhenDesignNotFound()
     {
         // Arrange
         var response = CreateErrorResponse(HttpStatusCode.NotFound);
@@ -354,10 +355,11 @@ public class DesignServiceTests
             .Setup(x => x.GetNetsAsync("unknown-design", It.IsAny<CancellationToken>()))
             .ReturnsAsync(response);
 
-        // Act & Assert
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await _sut.GetNetsAsync("unknown-design", "pcb"));
-        Assert.Contains("not found", ex.Message);
+        // Act
+        var result = await _sut.GetNetsAsync("unknown-design", "pcb");
+
+        // Assert — 404 now returns empty list for graceful UX
+        Assert.Empty(result);
     }
 
     [Fact]

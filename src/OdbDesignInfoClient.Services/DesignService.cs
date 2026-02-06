@@ -228,6 +228,14 @@ public class DesignService : IDesignService
         {
             var response = await _restApi.GetComponentsAsync(designId, cancellationToken);
 
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _logger?.LogWarning(
+                    "Design '{DesignId}' not found when fetching components via REST API — returning empty list",
+                    designId);
+                return [];
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 HandleHttpError(response.StatusCode, designId, "components");
@@ -359,6 +367,14 @@ public class DesignService : IDesignService
         try
         {
             var response = await _restApi.GetNetsAsync(designId, cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                _logger?.LogWarning(
+                    "Design '{DesignId}' not found when fetching nets via REST API — returning empty list",
+                    designId);
+                return [];
+            }
 
             if (!response.IsSuccessStatusCode)
             {

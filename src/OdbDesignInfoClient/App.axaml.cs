@@ -4,6 +4,7 @@ using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OdbDesignInfoClient.Core.Models;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Core.ViewModels;
 using OdbDesignInfoClient.Services;
@@ -11,6 +12,7 @@ using OdbDesignInfoClient.Views;
 using Serilog;
 using System;
 using System.IO;
+using System.Linq;
 
 namespace OdbDesignInfoClient;
 
@@ -68,15 +70,27 @@ public partial class App : Application
         // Read server configuration
         var serverHost = configuration["Server:Host"] ?? "localhost";
         var serverPort = configuration.GetValue<int>("Server:RestPort", 8888);
+        var grpcPort = configuration.GetValue<int>("Server:GrpcPort", 50051);
         var useHttps = configuration.GetValue<bool>("Server:UseHttps", false);
         var protocol = useHttps ? "https" : "http";
         var restBaseUrl = $"{protocol}://{serverHost}:{serverPort}";
 
         Log.Information("Configuring REST client for {BaseUrl}", restBaseUrl);
+        Log.Information("Configuring gRPC client for {Protocol}://{Host}:{Port}", protocol, serverHost, grpcPort);
+
+        // Create server configuration
+        var serverConfig = new ServerConnectionConfig
+        {
+            Host = serverHost,
+            RestPort = serverPort,
+            GrpcPort = grpcPort,
+            UseHttps = useHttps,
+            TimeoutSeconds = configuration.GetValue<int>("Server:TimeoutSeconds", 30)
+        };
 
         // Configure services
         var services = new ServiceCollection();
-        ConfigureServices(services, configuration, restBaseUrl);
+        ConfigureServices(services, configuration, serverConfig, restBaseUrl);
         Services = services.BuildServiceProvider();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -110,10 +124,11 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    private static void ConfigureServices(IServiceCollection services, IConfiguration configuration, string restBaseUrl)
+    private static void ConfigureServices(IServiceCollection services, IConfiguration configuration, ServerConnectionConfig serverConfig, string restBaseUrl)
     {
         // Register configuration
         services.AddSingleton(configuration);
+        services.AddSingleton(serverConfig);
 
         // Register all OdbDesignInfoClient services with configured base URL
         services.AddOdbDesignInfoClientServices(restBaseUrl);

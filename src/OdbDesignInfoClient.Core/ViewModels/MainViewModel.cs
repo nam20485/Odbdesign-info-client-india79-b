@@ -15,6 +15,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private readonly IDesignService _designService;
     private readonly INavigationService _navigationService;
     private readonly ICrossProbeService _crossProbeService;
+    private readonly ServerConnectionConfig _serverConfig;
 
     [ObservableProperty]
     private string _title = "OdbDesignInfo Client";
@@ -66,6 +67,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         IDesignService designService,
         INavigationService navigationService,
         ICrossProbeService crossProbeService,
+        ServerConnectionConfig serverConfig,
         ComponentsTabViewModel componentsTab,
         NetsTabViewModel netsTab,
         StackupTabViewModel stackupTab,
@@ -77,6 +79,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _designService = designService;
         _navigationService = navigationService;
         _crossProbeService = crossProbeService;
+        _serverConfig = serverConfig;
 
         // Initialize tab ViewModels as readonly properties
         ComponentsTab = componentsTab;
@@ -164,8 +167,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         IsLoading = true;
         try
         {
-            var config = new ServerConnectionConfig();
-            var success = await _connectionService.ConnectAsync(config, cancellationToken);
+            var success = await _connectionService.ConnectAsync(_serverConfig, cancellationToken);
             
             if (success)
             {

@@ -88,11 +88,12 @@ public class DesignServiceTests
     public async Task GetDesignsAsync_ReturnsDesignList_WhenServerReturnsNames()
     {
         // Arrange
-        var designNames = new List<string> { "design1", "design2" };
+        var designNamesJson = """{"filearchives":[{"name":"design1","loaded":true},{"name":"design2","loaded":true}]}""";
         _mockRestApi.Setup(x => x.GetDesignNamesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(designNames);
+            .ReturnsAsync(CreateSuccessResponse(designNamesJson));
+        var stepsJson = """["pcb"]""";
         _mockRestApi.Setup(x => x.GetStepsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<string> { "pcb" });
+            .ReturnsAsync(CreateSuccessResponse(stepsJson));
 
         // Act
         var result = await _sut.GetDesignsAsync();
@@ -107,9 +108,9 @@ public class DesignServiceTests
     public async Task GetDesignAsync_ReturnsDesign_WhenDesignExists()
     {
         // Arrange
-        var steps = new List<string> { "pcb", "panel" };
+        var stepsJson = """["pcb", "panel"]""";
         _mockRestApi.Setup(x => x.GetStepsAsync("test-design", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(steps);
+            .ReturnsAsync(CreateSuccessResponse(stepsJson));
 
         // Act
         var result = await _sut.GetDesignAsync("test-design");
@@ -436,9 +437,9 @@ public class DesignServiceTests
     public async Task GetStackupAsync_ReturnsLayers_WhenServerReturnsLayerNames()
     {
         // Arrange
-        var layerNames = new List<string> { "top_copper", "dielectric_1", "bottom_copper" };
+        var layerNamesJson = """["top_copper", "dielectric_1", "bottom_copper"]""";
         _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(layerNames);
+            .ReturnsAsync(CreateSuccessResponse(layerNamesJson));
 
         // Act
         var result = await _sut.GetStackupAsync("design-1", "pcb");

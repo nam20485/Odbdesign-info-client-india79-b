@@ -586,6 +586,14 @@ public class DesignService : IDesignService
     {
         switch (statusCode)
         {
+            case HttpStatusCode.NotFound:
+                _logger?.LogWarning(
+                    "Design '{DesignId}' not found when fetching {ResourceType} via REST API — returning empty list",
+                    designId,
+                    resourceType);
+                // This should never be reached since 404 is handled before calling this method
+                throw new InvalidOperationException($"Design '{designId}' not found.");
+
             case HttpStatusCode.Unauthorized:
                 _logger?.LogWarning(
                     "Authentication failed when fetching {ResourceType} for design '{DesignId}'",

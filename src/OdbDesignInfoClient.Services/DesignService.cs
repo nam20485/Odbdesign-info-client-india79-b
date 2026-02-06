@@ -1,9 +1,13 @@
 using System.Collections.Concurrent;
+using System.Net;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Odb.Grpc;
 using OdbDesignInfoClient.Core.Models;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Services.Api;
+using OdbDesignInfoClient.Services.Api.Dtos;
 
 namespace OdbDesignInfoClient.Services;
 
@@ -15,6 +19,18 @@ public class DesignService : IDesignService
     private readonly ILogger<DesignService>? _logger;
     private readonly IConnectionService _connectionService;
     private readonly IOdbDesignRestApi _restApi;
+
+    /// <summary>
+    /// JSON serializer options configured for protobuf-generated JSON (camelCase).
+    /// </summary>
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        AllowTrailingCommas = true,
+        ReadCommentHandling = JsonCommentHandling.Skip,
+    };
 
     private readonly ConcurrentDictionary<string, Design> _designCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Component>> _componentCache = new();
@@ -191,11 +207,57 @@ public class DesignService : IDesignService
         return components;
     }
 
+    /// <summary>
+    /// Fetches components via REST API with JSON deserialization.
+    /// </summary>
+    /// <param name="designId">The design identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of components.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when design not found (404) or JSON parsing fails.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when authentication fails (401).</exception>
     private async Task<List<Component>> GetComponentsViaRestAsync(string designId, CancellationToken cancellationToken)
     {
-        // REST API parsing not implemented yet
-        _logger?.LogWarning("REST API for components is not implemented yet");
-        throw new NotImplementedException("REST API component parsing not yet implemented. Use gRPC.");
+        _logger?.LogInformation("Fetching components via REST API for design: {DesignId}", designId);
+
+        try
+        {
+            var response = await _restApi.GetComponentsAsync(designId, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                HandleHttpError(response.StatusCode, designId, "components");
+            }
+
+            if (string.IsNullOrWhiteSpace(response.Content))
+            {
+                _logger?.LogWarning("REST API returned empty content for components of design: {DesignId}", designId);
+                return [];
+            }
+
+            var componentDtos = JsonSerializer.Deserialize<List<ComponentDto>>(response.Content, JsonOptions);
+
+            if (componentDtos is null)
+            {
+                _logger?.LogWarning("JSON deserialization returned null for components of design: {DesignId}", designId);
+                return [];
+            }
+
+            _logger?.LogInformation(
+                "Successfully deserialized {Count} components from REST API for design: {DesignId}",
+                componentDtos.Count,
+                designId);
+
+            return componentDtos.Select(MapComponentDto).ToList();
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogError(
+                ex,
+                "Failed to deserialize components JSON for design: {DesignId}. JSON parsing error at position {Position}",
+                designId,
+                ex.BytePositionInLine);
+            throw new InvalidOperationException($"Failed to parse components response: {ex.Message}", ex);
+        }
     }
 
     /// <inheritdoc />
@@ -277,11 +339,57 @@ public class DesignService : IDesignService
         return nets;
     }
 
+    /// <summary>
+    /// Fetches nets via REST API with JSON deserialization.
+    /// </summary>
+    /// <param name="designId">The design identifier.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>List of nets.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when design not found (404) or JSON parsing fails.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown when authentication fails (401).</exception>
     private async Task<List<Net>> GetNetsViaRestAsync(string designId, CancellationToken cancellationToken)
     {
-        // REST API parsing not implemented yet
-        _logger?.LogWarning("REST API for nets is not implemented yet");
-        throw new NotImplementedException("REST API net parsing not yet implemented. Use gRPC.");
+        _logger?.LogInformation("Fetching nets via REST API for design: {DesignId}", designId);
+
+        try
+        {
+            var response = await _restApi.GetNetsAsync(designId, cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                HandleHttpError(response.StatusCode, designId, "nets");
+            }
+
+            if (string.IsNullOrWhiteSpace(response.Content))
+            {
+                _logger?.LogWarning("REST API returned empty content for nets of design: {DesignId}", designId);
+                return [];
+            }
+
+            var netDtos = JsonSerializer.Deserialize<List<NetDto>>(response.Content, JsonOptions);
+
+            if (netDtos is null)
+            {
+                _logger?.LogWarning("JSON deserialization returned null for nets of design: {DesignId}", designId);
+                return [];
+            }
+
+            _logger?.LogInformation(
+                "Successfully deserialized {Count} nets from REST API for design: {DesignId}",
+                netDtos.Count,
+                designId);
+
+            return netDtos.Select(MapNetDto).ToList();
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogError(
+                ex,
+                "Failed to deserialize nets JSON for design: {DesignId}. JSON parsing error at position {Position}",
+                designId,
+                ex.BytePositionInLine);
+            throw new InvalidOperationException($"Failed to parse nets response: {ex.Message}", ex);
+        }
     }
 
     /// <inheritdoc />
@@ -355,6 +463,126 @@ public class DesignService : IDesignService
             ViaCount = 0,
             Features = features
         };
+    }
+
+    /// <summary>
+    /// Maps a ComponentDto from REST API JSON to the domain Component model.
+    /// </summary>
+    /// <param name="dto">The component DTO from JSON deserialization.</param>
+    /// <returns>A Component domain model instance.</returns>
+    private static Component MapComponentDto(ComponentDto dto)
+    {
+        // Map pins from package if available
+        var pins = dto.Package?.Pins?
+            .Select(pinDto => new Pin
+            {
+                Name = pinDto.Name ?? string.Empty,
+                Number = (int)(pinDto.Index ?? 0),
+                NetName = string.Empty, // Not available in component response
+                ElectricalType = string.Empty,
+            })
+            .ToList() ?? [];
+
+        return new Component
+        {
+            RefDes = dto.RefDes ?? string.Empty,
+            PartName = dto.PartName ?? string.Empty,
+            Package = dto.Package?.Name ?? string.Empty,
+            Side = MapBoardSide(dto.Side),
+            // Position and rotation not yet available in protobuf schema
+            // See TODO in MapProtobufComponent
+            Rotation = 0.0,
+            X = 0.0,
+            Y = 0.0,
+            Pins = pins,
+        };
+    }
+
+    /// <summary>
+    /// Maps a NetDto from REST API JSON to the domain Net model.
+    /// </summary>
+    /// <param name="dto">The net DTO from JSON deserialization.</param>
+    /// <returns>A Net domain model instance.</returns>
+    private static Net MapNetDto(NetDto dto)
+    {
+        var features = dto.PinConnections?
+            .Select(pc => new NetFeature
+            {
+                FeatureType = "Pin",
+                Id = pc.Name ?? string.Empty,
+                ComponentRef = pc.Component?.RefDes ?? string.Empty,
+            })
+            .ToList() ?? [];
+
+        return new Net
+        {
+            Name = dto.Name ?? string.Empty,
+            PinCount = dto.PinConnections?.Count ?? 0,
+            ViaCount = 0, // Not available in current protobuf schema
+            Features = features,
+        };
+    }
+
+    /// <summary>
+    /// Maps protobuf BoardSide enum string to display string.
+    /// </summary>
+    /// <param name="side">The side string from JSON ("TOP", "BOTTOM", "BS_NONE", or null).</param>
+    /// <returns>Display string ("Top", "Bottom", or empty).</returns>
+    private static string MapBoardSide(string? side)
+    {
+        return side?.ToUpperInvariant() switch
+        {
+            "TOP" => "Top",
+            "BOTTOM" => "Bottom",
+            "BS_NONE" => string.Empty,
+            _ => string.Empty,
+        };
+    }
+
+    /// <summary>
+    /// Handles HTTP error responses from the REST API.
+    /// </summary>
+    /// <param name="statusCode">The HTTP status code.</param>
+    /// <param name="designId">The design identifier.</param>
+    /// <param name="resourceType">The type of resource being fetched (e.g., "components", "nets").</param>
+    /// <exception cref="InvalidOperationException">Thrown for 404 (Not Found) or other errors.</exception>
+    /// <exception cref="UnauthorizedAccessException">Thrown for 401 (Unauthorized).</exception>
+    private void HandleHttpError(HttpStatusCode statusCode, string designId, string resourceType)
+    {
+        switch (statusCode)
+        {
+            case HttpStatusCode.NotFound:
+                _logger?.LogWarning(
+                    "Design '{DesignId}' not found when fetching {ResourceType} via REST API",
+                    designId,
+                    resourceType);
+                throw new InvalidOperationException($"Design '{designId}' not found.");
+
+            case HttpStatusCode.Unauthorized:
+                _logger?.LogWarning(
+                    "Authentication failed when fetching {ResourceType} for design '{DesignId}'",
+                    resourceType,
+                    designId);
+                throw new UnauthorizedAccessException(
+                    "Authentication failed. Please check your credentials.");
+
+            case HttpStatusCode.InternalServerError:
+                _logger?.LogError(
+                    "Server error when fetching {ResourceType} for design '{DesignId}'",
+                    resourceType,
+                    designId);
+                throw new InvalidOperationException(
+                    $"Server error occurred while fetching {resourceType}. Please try again later.");
+
+            default:
+                _logger?.LogError(
+                    "Unexpected HTTP status {StatusCode} when fetching {ResourceType} for design '{DesignId}'",
+                    statusCode,
+                    resourceType,
+                    designId);
+                throw new InvalidOperationException(
+                    $"Unexpected error (HTTP {(int)statusCode}) while fetching {resourceType}.");
+        }
     }
 
     private static string DetermineLayerType(string layerName)

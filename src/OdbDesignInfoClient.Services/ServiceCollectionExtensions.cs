@@ -1,6 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Services.Api;
+using Polly;
+using Polly.Extensions.Http;
 using Refit;
 
 namespace OdbDesignInfoClient.Services;
@@ -26,14 +29,31 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAuthService, BasicAuthService>();
         services.AddTransient<AuthHeaderHandler>();
 
-        // Register Refit REST API client
+        // Register Refit REST API client with Polly retry policy
         services.AddRefitClient<IOdbDesignRestApi>()
             .ConfigureHttpClient(c =>
             {
                 c.BaseAddress = new Uri(restBaseUrl);
                 c.Timeout = TimeSpan.FromSeconds(30);
             })
-            .AddHttpMessageHandler<AuthHeaderHandler>();
+            .AddHttpMessageHandler<AuthHeaderHandler>()
+            .AddPolicyHandler((serviceProvider, _) =>
+            {
+                var logger = serviceProvider.GetService<ILoggerFactory>()?.CreateLogger("HttpRetryPolicy");
+                return HttpPolicyExtensions
+                    .HandleTransientHttpError()
+                    .WaitAndRetryAsync(
+                        retryCount: 3,
+                        sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Pow(2, attempt - 1)),
+                        onRetry: (outcome, timespan, attempt, _) =>
+                        {
+                            logger?.LogWarning(
+                                "REST API retry attempt {Attempt}/3 after {Delay}s due to {Reason}",
+                                attempt,
+                                timespan.TotalSeconds,
+                                outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                        });
+            });
 
         // Register core services as singletons (they manage connection state)
         services.AddSingleton<IConnectionService, ConnectionService>();

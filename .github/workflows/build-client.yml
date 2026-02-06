@@ -1,8 +1,16 @@
 name: Build OdbDesignInfo Client
 
 on:
-  push:
-    branches: [ main, develop, 'mn/**' ]
+  pull_request:    
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'protoc/**'
+      - '*.sln'
+      - 'Directory.Build.props'
+      - 'global.json'
+  push:  
+    branches: [ main, develop, 'mn/**' ]    
     paths:
       - 'src/**'
       - 'tests/**'

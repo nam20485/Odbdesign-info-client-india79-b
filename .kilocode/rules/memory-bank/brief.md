@@ -1,1 +1,3 @@
-Provide a concise and comprehensive description of this project, highlighting its main objectives, key features, used technologies and significance. Then, write this description into a text file named appropriately to reflect the project's content, ensuring clarity and professionalism in the writing. Stay brief and short.
+# OdbDesignInfo Client Brief
+
+The OdbDesignInfo Client is a professional-grade, cross-platform desktop application built with .NET 10 and Avalonia UI. It acts as an intelligent analytics dashboard for interrogating ODB++ PCB design data served by the OdbDesignServer. Key features include hierarchical data visualization using TreeDataGrid, hybrid REST/gRPC connectivity for optimal performance, and bi-directional cross-probing with a 3D viewer via local IPC. The application targets CAM engineers and PCB designers, enabling them to validate design intent, check connectivity, and analyze stackup configurations efficiently.

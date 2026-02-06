@@ -185,3 +185,91 @@ public record Layer
     /// </summary>
     public string Material { get; init; } = string.Empty;
 }
+
+/// <summary>
+/// Represents a drill tool in an ODB++ design.
+/// </summary>
+public record DrillTool
+{
+    /// <summary>
+    /// Gets or sets the tool number.
+    /// </summary>
+    public int ToolNumber { get; init; }
+
+    /// <summary>
+    /// Gets or sets the drill diameter.
+    /// </summary>
+    public double Diameter { get; init; }
+
+    /// <summary>
+    /// Gets or sets the drill shape.
+    /// </summary>
+    public string Shape { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets a value indicating whether the drill is plated.
+    /// </summary>
+    public bool IsPlated { get; init; }
+
+    /// <summary>
+    /// Gets or sets the number of hits for this drill tool.
+    /// </summary>
+    public int HitCount { get; init; }
+}
+
+/// <summary>
+/// Represents a package/footprint in an ODB++ design.
+/// </summary>
+public record Package
+{
+    /// <summary>
+    /// Gets or sets the package name.
+    /// </summary>
+    public string Name { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the package pitch.
+    /// </summary>
+    public double Pitch { get; init; }
+
+    /// <summary>
+    /// Gets or sets the number of pins in the package.
+    /// </summary>
+    public int PinCount { get; init; }
+
+    /// <summary>
+    /// Gets or sets the package width.
+    /// </summary>
+    public double Width { get; init; }
+
+    /// <summary>
+    /// Gets or sets the package height.
+    /// </summary>
+    public double Height { get; init; }
+}
+
+/// <summary>
+/// Represents a part definition in an ODB++ design.
+/// </summary>
+public record Part
+{
+    /// <summary>
+    /// Gets or sets the part number.
+    /// </summary>
+    public string PartNumber { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the manufacturer name.
+    /// </summary>
+    public string Manufacturer { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the part description.
+    /// </summary>
+    public string Description { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the number of times this part is used in the design.
+    /// </summary>
+    public int UsageCount { get; init; }
+}

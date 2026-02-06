@@ -1,3 +1,4 @@
+using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using OdbDesignInfoClient.Core.Models;
@@ -8,7 +9,7 @@ namespace OdbDesignInfoClient.Core.ViewModels;
 /// <summary>
 /// Main ViewModel for the application shell.
 /// </summary>
-public partial class MainViewModel : ObservableObject
+public partial class MainViewModel : ObservableObject, IDisposable
 {
     private readonly IConnectionService _connectionService;
     private readonly IDesignService _designService;
@@ -40,27 +41,65 @@ public partial class MainViewModel : ObservableObject
     private bool _isViewerConnected;
 
     /// <summary>
+    /// Gets whether the connection is active.
+    /// </summary>
+    public bool IsConnected => ConnectionState == ConnectionState.Connected;
+
+    /// <summary>
+    /// Gets whether the connection is currently reconnecting.
+    /// </summary>
+    public bool IsReconnecting => ConnectionState == ConnectionState.Reconnecting;
+
+    // Tab ViewModels - set once on construction, never change
+    public ComponentsTabViewModel ComponentsTab { get; }
+    public NetsTabViewModel NetsTab { get; }
+    public StackupTabViewModel StackupTab { get; }
+    public DrillToolsTabViewModel DrillToolsTab { get; }
+    public PackagesTabViewModel PackagesTab { get; }
+    public PartsTabViewModel PartsTab { get; }
+
+    /// <summary>
     /// Initializes a new instance of the MainViewModel.
     /// </summary>
     public MainViewModel(
         IConnectionService connectionService,
         IDesignService designService,
         INavigationService navigationService,
-        ICrossProbeService crossProbeService)
+        ICrossProbeService crossProbeService,
+        ComponentsTabViewModel componentsTab,
+        NetsTabViewModel netsTab,
+        StackupTabViewModel stackupTab,
+        DrillToolsTabViewModel drillToolsTab,
+        PackagesTabViewModel packagesTab,
+        PartsTabViewModel partsTab)
     {
         _connectionService = connectionService;
         _designService = designService;
         _navigationService = navigationService;
         _crossProbeService = crossProbeService;
 
+        // Initialize tab ViewModels as readonly properties
+        ComponentsTab = componentsTab;
+        NetsTab = netsTab;
+        StackupTab = stackupTab;
+        DrillToolsTab = drillToolsTab;
+        PackagesTab = packagesTab;
+        PartsTab = partsTab;
+
         // Subscribe to connection state changes
         _connectionService.StateChanged += OnConnectionStateChanged;
         _crossProbeService.ConnectionChanged += OnViewerConnectionChanged;
+
+        // Subscribe to navigation events
+        _navigationService.Navigated += OnNavigated;
     }
 
     private void OnConnectionStateChanged(object? sender, ConnectionState state)
     {
         ConnectionState = state;
+        OnPropertyChanged(nameof(IsConnected));
+        OnPropertyChanged(nameof(IsReconnecting));
+        
         StatusMessage = state switch
         {
             ConnectionState.Connected => "Connected to server",
@@ -76,12 +115,39 @@ public partial class MainViewModel : ObservableObject
         IsViewerConnected = isConnected;
     }
 
+    private void OnNavigated(object? sender, NavigationEventArgs e)
+    {
+        SelectedTabIndex = e.TabIndex;
+
+        // Handle entity navigation (deep linking) - check if tab has data loaded
+        if (!string.IsNullOrEmpty(e.EntityType) && !string.IsNullOrEmpty(e.EntityId))
+        {
+            switch (e.EntityType.ToLowerInvariant())
+            {
+                case "component":
+                    if (ComponentsTab.TotalCount > 0)
+                        ComponentsTab.NavigateToComponent(e.EntityId);
+                    break;
+                case "net":
+                    if (NetsTab.TotalCount > 0)
+                        NetsTab.NavigateToNet(e.EntityId);
+                    break;
+            }
+        }
+    }
+
     /// <summary>
     /// Connects to the server.
     /// </summary>
     [RelayCommand]
     private async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
+        if (ConnectionState == ConnectionState.Connected)
+        {
+            await DisconnectAsync();
+            return;
+        }
+
         IsLoading = true;
         try
         {
@@ -91,6 +157,18 @@ public partial class MainViewModel : ObservableObject
             if (success)
             {
                 await LoadDesignsAsync(cancellationToken);
+
+                // Try to connect to 3D viewer with user notification
+                try
+                {
+                    await _crossProbeService.ConnectAsync(cancellationToken);
+                    StatusMessage = "Connected to server and viewer";
+                }
+                catch (Exception)
+                {
+                    // Viewer is optional - notify user but continue
+                    StatusMessage = "Connected to server (viewer unavailable)";
+                }
             }
         }
         finally
@@ -105,6 +183,17 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task DisconnectAsync()
     {
+        // Disconnect from services - swallow cross-probe exceptions to ensure cleanup always happens
+        try
+        {
+            await _crossProbeService.DisconnectAsync();
+        }
+        catch (Exception ex)
+        {
+            // Ignore cross-probe disconnect errors - UI state should still be reset
+            System.Diagnostics.Debug.WriteLine($"Cross-probe disconnect error: {ex.Message}");
+        }
+        
         await _connectionService.DisconnectAsync();
         Designs = [];
         SelectedDesign = null;
@@ -123,6 +212,12 @@ public partial class MainViewModel : ObservableObject
         try
         {
             await LoadDesignsAsync(cancellationToken);
+            
+            if (SelectedDesign != null)
+            {
+                await LoadTabDataAsync(cancellationToken);
+            }
+            
             StatusMessage = $"Refreshed at {DateTime.Now:HH:mm:ss}";
         }
         finally
@@ -145,15 +240,83 @@ public partial class MainViewModel : ObservableObject
         if (value != null)
         {
             StatusMessage = $"Selected design: {value.Name}";
-            // Trigger data loading for the current tab
-            _ = OnDesignChangedAsync();
+            // Use lazy loading: load data only for the current tab
+            _ = LoadCurrentTabDataAsync();
         }
     }
 
-    private async Task OnDesignChangedAsync()
+    partial void OnSelectedTabIndexChanged(int value)
     {
-        // This will be called when the selected design changes
-        // Each tab ViewModel should subscribe to this and reload its data
-        await Task.CompletedTask;
+        if (SelectedDesign != null)
+        {
+            _ = LoadCurrentTabDataAsync();
+        }
+    }
+
+    private async Task LoadTabDataAsync(CancellationToken cancellationToken = default)
+    {
+        if (SelectedDesign == null) return;
+
+        var designId = SelectedDesign.Id;
+        var stepName = SelectedDesign.Steps.FirstOrDefault() ?? "pcb";
+
+        // Load data for all tabs in parallel
+        await Task.WhenAll(
+            ComponentsTab.LoadAsync(designId, stepName, cancellationToken),
+            NetsTab.LoadAsync(designId, stepName, cancellationToken),
+            StackupTab.LoadAsync(designId, stepName, cancellationToken),
+            DrillToolsTab.LoadAsync(designId, stepName, cancellationToken),
+            PackagesTab.LoadAsync(designId, stepName, cancellationToken),
+            PartsTab.LoadAsync(designId, stepName, cancellationToken)
+        );
+    }
+
+    private async Task LoadCurrentTabDataAsync(CancellationToken cancellationToken = default)
+    {
+        if (SelectedDesign == null) return;
+
+        var designId = SelectedDesign.Id;
+        var stepName = SelectedDesign.Steps.FirstOrDefault() ?? "pcb";
+
+        // Load data only for the current tab (lazy loading)
+        switch (SelectedTabIndex)
+        {
+            case 0:
+                await ComponentsTab.LoadAsync(designId, stepName, cancellationToken);
+                break;
+            case 1:
+                await NetsTab.LoadAsync(designId, stepName, cancellationToken);
+                break;
+            case 2:
+                await StackupTab.LoadAsync(designId, stepName, cancellationToken);
+                break;
+            case 3:
+                await DrillToolsTab.LoadAsync(designId, stepName, cancellationToken);
+                break;
+            case 4:
+                await PackagesTab.LoadAsync(designId, stepName, cancellationToken);
+                break;
+            case 5:
+                await PartsTab.LoadAsync(designId, stepName, cancellationToken);
+                break;
+        }
+    }
+
+    private bool _disposed;
+
+    /// <summary>
+    /// Disposes resources and unsubscribes from events.
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        // Unsubscribe from all events to prevent memory leaks
+        _connectionService.StateChanged -= OnConnectionStateChanged;
+        _crossProbeService.ConnectionChanged -= OnViewerConnectionChanged;
+        _navigationService.Navigated -= OnNavigated;
+
+        GC.SuppressFinalize(this);
     }
 }

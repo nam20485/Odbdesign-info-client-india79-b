@@ -18,6 +18,11 @@ public interface IConnectionService
     ServerConnectionConfig Configuration { get; }
 
     /// <summary>
+    /// Gets whether gRPC is available for high-performance data streaming.
+    /// </summary>
+    bool IsGrpcAvailable { get; }
+
+    /// <summary>
     /// Event raised when the connection state changes.
     /// </summary>
     event EventHandler<ConnectionState>? StateChanged;

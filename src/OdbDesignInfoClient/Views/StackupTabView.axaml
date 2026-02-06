@@ -1,0 +1,95 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OdbDesignInfoClient.Core.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="OdbDesignInfoClient.Views.StackupTabView"
+             x:DataType="vm:StackupTabViewModel">
+
+    <Grid RowDefinitions="Auto,*,Auto">
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0" 
+                           Text="Layer Stackup" 
+                           FontWeight="Bold"
+                           FontSize="16"
+                           VerticalAlignment="Center"/>
+                <Button Grid.Column="1" 
+                        Content="Refresh" 
+                        Command="{Binding RefreshCommand}"/>
+            </Grid>
+        </Border>
+
+        <!-- Loading Overlay -->
+        <Border Grid.Row="1" 
+                IsVisible="{Binding IsLoading}"
+                Background="#80000000"
+                ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading stackup..." 
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Layer List -->
+        <ScrollViewer Grid.Row="1" Padding="8">
+            <ItemsControl ItemsSource="{Binding Layers}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:LayerRowViewModel}">
+                        <Border Margin="0,2" Padding="8" 
+                                CornerRadius="4"
+                                Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                                <!-- Layer Color Indicator -->
+                                <Border Grid.Column="0" 
+                                        Width="24" Height="24" 
+                                        CornerRadius="4"
+                                        Background="{Binding TypeColor}"
+                                        Margin="0,0,8,0"/>
+                                
+                                <!-- Layer Name -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                    <TextBlock Text="{Binding Type}" FontSize="11" Opacity="0.7"/>
+                                </StackPanel>
+                                
+                                <!-- Polarity -->
+                                <TextBlock Grid.Column="2" 
+                                           Text="{Binding Polarity}"
+                                           VerticalAlignment="Center"
+                                           Width="80"/>
+                                
+                                <!-- Material -->
+                                <TextBlock Grid.Column="3" 
+                                           Text="{Binding Material}"
+                                           VerticalAlignment="Center"
+                                           Width="100"/>
+                                
+                                <!-- Thickness -->
+                                <TextBlock Grid.Column="4" 
+                                           Text="{Binding Thickness, StringFormat={}{0:F3} mm}"
+                                           VerticalAlignment="Center"
+                                           Width="80"
+                                           HorizontalAlignment="Right"/>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="2" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <TextBlock>
+                <Run Text="Total: "/>
+                <Run Text="{Binding TotalLayers}"/>
+                <Run Text=" layers"/>
+            </TextBlock>
+        </Border>
+    </Grid>
+</UserControl>

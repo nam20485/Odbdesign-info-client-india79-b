@@ -188,9 +188,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             await _crossProbeService.DisconnectAsync();
         }
-        catch
+        catch (Exception ex)
         {
             // Ignore cross-probe disconnect errors - UI state should still be reset
+            System.Diagnostics.Debug.WriteLine($"Cross-probe disconnect error: {ex.Message}");
         }
         
         await _connectionService.DisconnectAsync();

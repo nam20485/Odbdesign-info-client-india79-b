@@ -41,10 +41,12 @@ public class DesignService : IDesignService
     private readonly ConcurrentDictionary<string, Design> _designCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Component>> _componentCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Net>> _netCache = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<Layer>> _stackupCache = new();
     
     private DateTime _designCacheRefresh = DateTime.MinValue;
     private DateTime _componentCacheRefresh = DateTime.MinValue;
     private DateTime _netCacheRefresh = DateTime.MinValue;
+    private DateTime _stackupCacheRefresh = DateTime.MinValue;
     private readonly TimeSpan _cacheExpiration = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -152,14 +154,9 @@ public class DesignService : IDesignService
         {
             List<Component> components;
 
-            if (_connectionService.IsGrpcAvailable)
-            {
-                components = await GetComponentsViaGrpcAsync(designId, cancellationToken);
-            }
-            else
-            {
-                components = await GetComponentsViaRestAsync(designId, cancellationToken);
-            }
+            var components = await (_connectionService.IsGrpcAvailable
+                ? GetComponentsViaGrpcAsync(designId, cancellationToken)
+                : GetComponentsViaRestAsync(designId, cancellationToken));
 
             _componentCache[cacheKey] = components;
             return components;
@@ -292,14 +289,9 @@ public class DesignService : IDesignService
         {
             List<Net> nets;
 
-            if (_connectionService.IsGrpcAvailable)
-            {
-                nets = await GetNetsViaGrpcAsync(designId, cancellationToken);
-            }
-            else
-            {
-                nets = await GetNetsViaRestAsync(designId, cancellationToken);
-            }
+            nets = await (_connectionService.IsGrpcAvailable
+                ? GetNetsViaGrpcAsync(designId, cancellationToken)
+                : GetNetsViaRestAsync(designId, cancellationToken));
 
             _netCache[cacheKey] = nets;
             return nets;
@@ -422,6 +414,12 @@ public class DesignService : IDesignService
     {
         _logger?.LogInformation("Getting stackup for design {DesignId}, step {StepName}", designId, stepName);
 
+        var cacheKey = $"{designId}:{stepName}:stackup";
+        if (_stackupCache.TryGetValue(cacheKey, out var cached) && !IsStackupCacheExpired())
+        {
+            return cached;
+        }
+
         try
         {
             var layerNames = await _restApi.GetLayerNamesAsync(designId, stepName, cancellationToken);
@@ -433,6 +431,7 @@ public class DesignService : IDesignService
                 Polarity = "Positive"
             }).ToList();
 
+            _stackupCache[cacheKey] = layers;
             return layers;
         }
         catch (Exception ex)
@@ -446,10 +445,10 @@ public class DesignService : IDesignService
     {
         // TODO: Get position and rotation from protobuf when available in schema
         // For now, using defaults as these properties don't exist in current protobuf definition
+        // TODO: Map position and rotation from protobuf when available
         var rotation = 0.0;
         var x = 0.0;
         var y = 0.0;
-        var pins = new List<Pin>();
 
         return new Component
         {
@@ -460,7 +459,7 @@ public class DesignService : IDesignService
             Rotation = rotation,
             X = x,
             Y = y,
-            Pins = pins
+            Pins = []  // TODO: Map pins from protobuf when pin data is available
         };
     }
 
@@ -642,6 +641,7 @@ public class DesignService : IDesignService
     private bool IsDesignCacheExpired() => DateTime.Now - _designCacheRefresh > _cacheExpiration;
     private bool IsComponentCacheExpired() => DateTime.Now - _componentCacheRefresh > _cacheExpiration;
     private bool IsNetCacheExpired() => DateTime.Now - _netCacheRefresh > _cacheExpiration;
+    private bool IsStackupCacheExpired() => DateTime.Now - _stackupCacheRefresh > _cacheExpiration;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrillTool>> GetDrillToolsAsync(

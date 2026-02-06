@@ -121,9 +121,10 @@ public partial class NetsTabViewModel : ViewModelBase
             {
                 await _crossProbeService.HighlightNetAsync(net.Name);
             }
-            catch
+            catch (Exception ex)
             {
                 // Ignore cross-probe errors - shouldn't block UI interaction
+                System.Diagnostics.Debug.WriteLine($"Cross-probe error for net '{net.Name}': {ex.Message}");
             }
         }
     }

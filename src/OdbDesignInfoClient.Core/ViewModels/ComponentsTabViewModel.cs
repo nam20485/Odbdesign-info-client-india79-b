@@ -123,9 +123,10 @@ public partial class ComponentsTabViewModel : ViewModelBase
             {
                 await _crossProbeService.SelectAsync("component", component.RefDes);
             }
-            catch
+            catch (Exception ex)
             {
                 // Ignore cross-probe errors - shouldn't block UI interaction
+                System.Diagnostics.Debug.WriteLine($"Cross-probe error for component '{component.RefDes}': {ex.Message}");
             }
         }
     }

@@ -48,10 +48,11 @@ public static class ServiceCollectionExtensions
                         onRetry: (outcome, timespan, attempt, _) =>
                         {
                             logger?.LogWarning(
-                                "REST API retry attempt {Attempt}/3 after {Delay}s due to {Reason}",
+                                "REST API retry attempt {Attempt}/3 after {Delay}s due to {Reason} (URI: {RequestUri})",
                                 attempt,
                                 timespan.TotalSeconds,
-                                outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString());
+                                outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString(),
+                                outcome.Result?.RequestMessage?.RequestUri?.AbsoluteUri ?? "unknown");
                         });
             });
 

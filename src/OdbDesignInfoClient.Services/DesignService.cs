@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -579,6 +580,7 @@ public class DesignService : IDesignService
     /// <param name="resourceType">The type of resource being fetched (e.g., "components", "nets").</param>
     /// <exception cref="InvalidOperationException">Thrown for 404 (Not Found) or other errors.</exception>
     /// <exception cref="UnauthorizedAccessException">Thrown for 401 (Unauthorized).</exception>
+    [DoesNotReturn]
     private void HandleHttpError(HttpStatusCode statusCode, string designId, string resourceType)
     {
         switch (statusCode)

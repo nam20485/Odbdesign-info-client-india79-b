@@ -1,4 +1,5 @@
-trufflehog integration game plan
+# trufflehog integration game plan
+
 Scope & success criteria
 
 Guard every push/PR against leaked credentials using TruffleHog’s GitHub Action (docs ↗).
@@ -36,11 +37,11 @@ Ensure re-runs after updating the allowlist succeed, demonstrating false-positiv
 Track runtime (<5 min target) and adjust depth or caching if needed.
 Risks & mitigations
 
-Risk	Mitigation
-False positives halting pipelines	Tight allowlist, use --results=verified,unknown to avoid unverified noise, document escalation.
-Long runtimes on large histories	Event-aware shallow clone; optional --since-commit to limit scope.
-Secret in history prior to baseline	Initial manual review during baseline generation; treat findings as incident if genuinely sensitive.
-Tool drift (new CLI options)	Pin action to a specific release tag, review changelog quarterly, add Renovate-style reminder.
+Risk Mitigation
+False positives halting pipelines: Tight allowlist, use --results=verified,unknown to avoid unverified noise, document escalation.
+Long runtimes on large histories: Event-aware shallow clone; optional --since-commit to limit scope.
+Secret in history prior to baseline: Initial manual review during baseline generation; treat findings as incident if genuinely sensitive.
+Tool drift (new CLI options): Pin action to a specific release tag, review changelog quarterly, add Renovate-style reminder.
 Acceptance criteria
 
 CI workflow fails any PR introducing unapproved secrets and uploads artifacts for investigation.

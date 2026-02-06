@@ -17,16 +17,7 @@ on:
       - 'protoc/**'
       - '*.sln'
       - 'Directory.Build.props'
-      - 'global.json'
-  pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'src/**'
-      - 'tests/**'
-      - 'protoc/**'
-      - '*.sln'
-      - 'Directory.Build.props'
-      - 'global.json'
+      - 'global.json' 
   workflow_dispatch:
 
 env:

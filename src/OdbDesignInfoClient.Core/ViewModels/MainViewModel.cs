@@ -94,6 +94,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _navigationService.Navigated += OnNavigated;
     }
 
+    /// <summary>
+    /// Initializes the ViewModel and optionally auto-connects.
+    /// </summary>
+    public async Task InitializeAsync(bool autoConnect = false)
+    {
+        if (autoConnect)
+        {
+            StatusMessage = "Auto-connecting...";
+            await Task.Delay(500); // Brief delay to let UI initialize
+            await ConnectAsync();
+        }
+    }
+
     private void OnConnectionStateChanged(object? sender, ConnectionState state)
     {
         ConnectionState = state;

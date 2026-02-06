@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Core.ViewModels;
@@ -24,6 +25,11 @@ public partial class App : Application
     public static IServiceProvider? Services { get; private set; }
 
     /// <summary>
+    /// Gets the command line arguments.
+    /// </summary>
+    public static string[] CommandLineArgs { get; private set; } = [];
+
+    /// <summary>
     /// Initializes the application.
     /// </summary>
     public override void Initialize()
@@ -36,6 +42,12 @@ public partial class App : Application
     /// </summary>
     public override void OnFrameworkInitializationCompleted()
     {
+        // Load configuration from appsettings.json
+        var configuration = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+            .Build();
+
         // Configure Serilog
         var logPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -53,13 +65,25 @@ public partial class App : Application
 
         Log.Information("OdbDesignInfoClient starting...");
 
+        // Read server configuration
+        var serverHost = configuration["Server:Host"] ?? "localhost";
+        var serverPort = configuration.GetValue<int>("Server:RestPort", 8888);
+        var useHttps = configuration.GetValue<bool>("Server:UseHttps", false);
+        var protocol = useHttps ? "https" : "http";
+        var restBaseUrl = $"{protocol}://{serverHost}:{serverPort}";
+
+        Log.Information("Configuring REST client for {BaseUrl}", restBaseUrl);
+
         // Configure services
         var services = new ServiceCollection();
-        ConfigureServices(services);
+        ConfigureServices(services, configuration, restBaseUrl);
         Services = services.BuildServiceProvider();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
+            // Store command line arguments
+            CommandLineArgs = desktop.Args ?? [];
+
             // Avoid duplicate validations from both Avalonia and CommunityToolkit.
             BindingPlugins.DataValidators.RemoveAt(0);
 
@@ -68,15 +92,31 @@ public partial class App : Application
             {
                 DataContext = mainViewModel
             };
+
+            // Check for auto-connect argument
+            var autoConnect = CommandLineArgs.Any(arg => 
+                arg.Equals("--auto-connect", StringComparison.OrdinalIgnoreCase) ||
+                arg.Equals("-ac", StringComparison.OrdinalIgnoreCase));
+
+            if (autoConnect)
+            {
+                Log.Information("Auto-connect enabled via CLI argument");
+            }
+
+            // Initialize the view model after window is created
+            _ = mainViewModel.InitializeAsync(autoConnect);
         }
 
         base.OnFrameworkInitializationCompleted();
     }
 
-    private static void ConfigureServices(IServiceCollection services)
+    private static void ConfigureServices(IServiceCollection services, IConfiguration configuration, string restBaseUrl)
     {
-        // Register all OdbDesignInfoClient services (includes Refit, auth, connection, design services)
-        services.AddOdbDesignInfoClientServices();
+        // Register configuration
+        services.AddSingleton(configuration);
+
+        // Register all OdbDesignInfoClient services with configured base URL
+        services.AddOdbDesignInfoClientServices(restBaseUrl);
 
         // Register Tab ViewModels as Transient (new instance per request)
         services.AddTransient<ComponentsTabViewModel>();

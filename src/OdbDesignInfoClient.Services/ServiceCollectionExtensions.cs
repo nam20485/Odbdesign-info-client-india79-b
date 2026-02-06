@@ -45,14 +45,44 @@ public static class ServiceCollectionExtensions
                     .WaitAndRetryAsync(
                         retryCount: 3,
                         sleepDurationProvider: attempt => TimeSpan.FromSeconds(Math.Min(Math.Pow(2, attempt - 1), 30)),
-                        onRetry: (outcome, timespan, attempt, _) =>
+                        onRetry: async (outcome, timespan, attempt, _) =>
                         {
-                            logger?.LogWarning(
-                                "REST API retry attempt {Attempt}/3 after {Delay}s due to {Reason} (URI: {RequestUri})",
-                                attempt,
-                                timespan.TotalSeconds,
-                                outcome.Exception?.Message ?? outcome.Result?.StatusCode.ToString(),
-                                outcome.Result?.RequestMessage?.RequestUri?.AbsoluteUri ?? "unknown");
+                            var statusCode = outcome.Result?.StatusCode.ToString() ?? "Exception";
+                            var uri = outcome.Result?.RequestMessage?.RequestUri?.AbsoluteUri ?? "unknown";
+                            
+                            // Log response body for 500 errors to help diagnose server issues
+                            string? errorBody = null;
+                            if (outcome.Result?.StatusCode == System.Net.HttpStatusCode.InternalServerError)
+                            {
+                                try
+                                {
+                                    errorBody = await outcome.Result.Content.ReadAsStringAsync();
+                                }
+                                catch
+                                {
+                                    // Ignore errors reading response body
+                                }
+                            }
+
+                            if (!string.IsNullOrWhiteSpace(errorBody))
+                            {
+                                logger?.LogWarning(
+                                    "REST API retry attempt {Attempt}/3 after {Delay}s due to {Reason} (URI: {RequestUri}). Server error: {ErrorBody}",
+                                    attempt,
+                                    timespan.TotalSeconds,
+                                    statusCode,
+                                    uri,
+                                    errorBody);
+                            }
+                            else
+                            {
+                                logger?.LogWarning(
+                                    "REST API retry attempt {Attempt}/3 after {Delay}s due to {Reason} (URI: {RequestUri})",
+                                    attempt,
+                                    timespan.TotalSeconds,
+                                    outcome.Exception?.Message ?? statusCode,
+                                    uri);
+                            }
                         });
             });
 

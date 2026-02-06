@@ -118,7 +118,17 @@ public partial class App : Application
             }
 
             // Initialize the view model after window is created
-            _ = mainViewModel.InitializeAsync(autoConnect);
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await mainViewModel.InitializeAsync(autoConnect);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Failed to initialize MainViewModel");
+                }
+            });
         }
 
         base.OnFrameworkInitializationCompleted();

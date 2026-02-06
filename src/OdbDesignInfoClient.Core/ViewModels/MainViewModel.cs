@@ -105,7 +105,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
         if (autoConnect)
         {
             StatusMessage = "Auto-connecting...";
-            await Task.Delay(500); // Brief delay to let UI initialize
             await ConnectAsync();
         }
     }

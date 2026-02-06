@@ -171,31 +171,7 @@ public class DesignService : IDesignService
                         continue;
                     }
 
-                    List<string> steps;
-                    try
-                    {
-                        // Try to parse as a simple array first
-                        steps = JsonSerializer.Deserialize<List<string>>(stepsResponse.Content ?? "[]", JsonOptions) ?? [];
-                    }
-                    catch (JsonException)
-                    {
-                        // If that fails, try to extract from object structure
-                        using var doc = JsonDocument.Parse(stepsResponse.Content ?? "{}");
-                        var root = doc.RootElement;
-                        
-                        if (root.TryGetProperty("steps", out var stepsArray))
-                        {
-                            steps = stepsArray.EnumerateArray()
-                                .Select(e => e.GetString() ?? string.Empty)
-                                .Where(s => !string.IsNullOrEmpty(s))
-                                .ToList();
-                        }
-                        else
-                        {
-                            _logger?.LogWarning("Unable to parse steps from response for design '{DesignName}'", name);
-                            steps = [];
-                        }
-                    }
+                    var steps = ParseStepsFromResponse(stepsResponse.Content, name);
                     
                     var design = new Design
                     {
@@ -266,29 +242,7 @@ public class DesignService : IDesignService
                 return null;
             }
 
-            List<string> steps;
-            try
-            {
-                steps = JsonSerializer.Deserialize<List<string>>(stepsResponse.Content ?? "[]", JsonOptions) ?? [];
-            }
-            catch (JsonException)
-            {
-                using var doc = JsonDocument.Parse(stepsResponse.Content ?? "{}");
-                var root = doc.RootElement;
-                
-                if (root.TryGetProperty("steps", out var stepsArray))
-                {
-                    steps = stepsArray.EnumerateArray()
-                        .Select(e => e.GetString() ?? string.Empty)
-                        .Where(s => !string.IsNullOrEmpty(s))
-                        .ToList();
-                }
-                else
-                {
-                    _logger?.LogWarning("Unable to parse steps from response for design '{DesignId}'", designId);
-                    steps = [];
-                }
-            }
+            var steps = ParseStepsFromResponse(stepsResponse.Content, designId);
             
             var design = new Design
             {
@@ -593,7 +547,15 @@ public class DesignService : IDesignService
 
         try
         {
-            var layerNames = await _restApi.GetLayerNamesAsync(designId, stepName, cancellationToken);
+            var response = await _restApi.GetLayerNamesAsync(designId, stepName, cancellationToken);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(response.Content))
+            {
+                _logger?.LogWarning("Failed to get layer names for design {DesignId}, step {StepName}. Status: {StatusCode}", 
+                    designId, stepName, response.StatusCode);
+                return new List<Layer>();
+            }
+
+            var layerNames = JsonSerializer.Deserialize<List<string>>(response.Content, JsonOptions) ?? new List<string>();
             var layers = layerNames.Select((name, index) => new Layer
             {
                 Id = index,
@@ -885,5 +847,35 @@ public class DesignService : IDesignService
         _designCacheRefresh = DateTime.MinValue;
         _componentCacheRefresh = DateTime.MinValue;
         _netCacheRefresh = DateTime.MinValue;
+    }
+
+    /// <summary>
+    /// Parses step names from API response content.
+    /// </summary>
+    /// <param name="content">The raw JSON content from the API response.</param>
+    /// <param name="designName">The design name for logging purposes.</param>
+    /// <returns>List of step names.</returns>
+    private List<string> ParseStepsFromResponse(string? content, string designName)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(content ?? "[]", JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            using var doc = JsonDocument.Parse(content ?? "{}");
+            var root = doc.RootElement;
+            
+            if (root.TryGetProperty("steps", out var stepsArray))
+            {
+                return stepsArray.EnumerateArray()
+                    .Select(e => e.GetString() ?? string.Empty)
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .ToList();
+            }
+            
+            _logger?.LogWarning("Unable to parse steps from response for design '{DesignName}'", designName);
+            return [];
+        }
     }
 }

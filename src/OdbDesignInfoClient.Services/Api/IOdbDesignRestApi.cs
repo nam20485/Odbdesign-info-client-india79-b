@@ -30,13 +30,13 @@ public interface IOdbDesignRestApi
     /// Gets the list of layers for a step.
     /// </summary>
     [Get("/filemodels/{name}/steps/{step}/layers")]
-    Task<List<string>> GetLayerNamesAsync(string name, string step, CancellationToken cancellationToken = default);
+    Task<ApiResponse<string>> GetLayerNamesAsync(string name, string step, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the list of symbols for a design.
     /// </summary>
     [Get("/filemodels/{name}/symbols")]
-    Task<List<string>> GetSymbolNamesAsync(string name, CancellationToken cancellationToken = default);
+    Task<ApiResponse<string>> GetSymbolNamesAsync(string name, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the components for a design.

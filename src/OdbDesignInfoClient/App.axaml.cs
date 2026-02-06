@@ -10,6 +10,7 @@ using OdbDesignInfoClient.Core.ViewModels;
 using OdbDesignInfoClient.Services;
 using OdbDesignInfoClient.Views;
 using Serilog;
+using Serilog.Events;
 using System;
 using System.IO;
 using System.Linq;
@@ -57,8 +58,10 @@ public partial class App : Application
             "logs",
             "log-.txt");
 
+        var logLevel = configuration.GetValue("Logging:LogLevel:Default", "Information");
+        
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
+            .MinimumLevel.Is(ParseLogLevel(logLevel))
             .WriteTo.Console()
             .WriteTo.File(logPath, 
                 rollingInterval: RollingInterval.Day,
@@ -156,5 +159,18 @@ public partial class App : Application
 
         // Add logging
         services.AddLogging(builder => builder.AddSerilog(dispose: true));
+    }
+
+    private static Serilog.Events.LogEventLevel ParseLogLevel(string level)   
+    {
+        return level.ToLowerInvariant() switch
+        {
+            "debug" => Serilog.Events.LogEventLevel.Debug,
+            "information" => Serilog.Events.LogEventLevel.Information,
+            "warning" => Serilog.Events.LogEventLevel.Warning,
+            "error" => Serilog.Events.LogEventLevel.Error,
+            "fatal" => Serilog.Events.LogEventLevel.Fatal,
+            _ => Serilog.Events.LogEventLevel.Information
+        };
     }
 }

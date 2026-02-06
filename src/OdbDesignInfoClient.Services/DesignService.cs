@@ -574,24 +574,18 @@ public class DesignService : IDesignService
 
     /// <summary>
     /// Handles HTTP error responses from the REST API.
+    /// Note: 404 (Not Found) is handled gracefully by callers before reaching this method.
     /// </summary>
     /// <param name="statusCode">The HTTP status code.</param>
     /// <param name="designId">The design identifier.</param>
     /// <param name="resourceType">The type of resource being fetched (e.g., "components", "nets").</param>
-    /// <exception cref="InvalidOperationException">Thrown for 404 (Not Found) or other errors.</exception>
+    /// <exception cref="InvalidOperationException">Thrown for server errors or unexpected status codes.</exception>
     /// <exception cref="UnauthorizedAccessException">Thrown for 401 (Unauthorized).</exception>
     [DoesNotReturn]
     private void HandleHttpError(HttpStatusCode statusCode, string designId, string resourceType)
     {
         switch (statusCode)
         {
-            case HttpStatusCode.NotFound:
-                _logger?.LogWarning(
-                    "Design '{DesignId}' not found when fetching {ResourceType} via REST API",
-                    designId,
-                    resourceType);
-                throw new InvalidOperationException($"Design '{designId}' not found.");
-
             case HttpStatusCode.Unauthorized:
                 _logger?.LogWarning(
                     "Authentication failed when fetching {ResourceType} for design '{DesignId}'",

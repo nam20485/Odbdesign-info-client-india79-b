@@ -92,17 +92,52 @@ public class DesignService : IDesignService
             
             try
             {
-                // Parse the response which has structure: { "filearchives": [...] }
                 using var doc = JsonDocument.Parse(response.Content);
                 var root = doc.RootElement;
                 
-                if (root.TryGetProperty("filearchives", out var filearchivesArray))
+                // Try to parse as a simple string array first (documented REST API format)
+                if (root.ValueKind == JsonValueKind.Array)
+                {
+                    designInfos = root.EnumerateArray()
+                        .Select(item =>
+                        {
+                            // Handle both string array ["design1", "design2"] 
+                            // and object array with name/loaded properties
+                            if (item.ValueKind == JsonValueKind.String)
+                            {
+                                return (Name: item.GetString() ?? string.Empty, Loaded: true);
+                            }
+                            else if (item.ValueKind == JsonValueKind.Object)
+                            {
+                                var name = string.Empty;
+                                var loaded = true;
+                                
+                                if (item.TryGetProperty("name", out var nameElement))
+                                {
+                                    name = nameElement.GetString() ?? string.Empty;
+                                }
+                                
+                                if (item.TryGetProperty("loaded", out var loadedElement))
+                                {
+                                    loaded = loadedElement.GetBoolean();
+                                }
+                                
+                                return (Name: name, Loaded: loaded);
+                            }
+                            
+                            return (Name: string.Empty, Loaded: false);
+                        })
+                        .Where(item => !string.IsNullOrEmpty(item.Name))
+                        .ToList();
+                }
+                // Fallback to object format: { "filearchives": [...] }
+                else if (root.ValueKind == JsonValueKind.Object && root.TryGetProperty("filearchives", out var filearchivesArray))
                 {
                     designInfos = filearchivesArray.EnumerateArray()
                         .Select(item =>
                         {
                             var name = string.Empty;
-                            var loaded = false;
+                            var loaded = true;
                             
                             if (item.TryGetProperty("name", out var nameElement))
                             {
@@ -121,7 +156,7 @@ public class DesignService : IDesignService
                 }
                 else
                 {
-                    _logger?.LogError("Unable to find 'filearchives' property in response");
+                    _logger?.LogError("Unable to parse response - expected JSON array or object with 'filearchives' property");
                     return [];
                 }
             }

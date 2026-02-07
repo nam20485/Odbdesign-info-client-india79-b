@@ -1,7 +1,9 @@
 name: Droid Auto Review
 
+# Using pull_request_target to support fork PRs with secrets
+# Safe because we don't execute untrusted code - only pass PR data to Factory AI
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, ready_for_review, reopened]
 
 jobs:
@@ -9,11 +11,9 @@ jobs:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
       issues: write
-      id-token: write
-      actions: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -21,7 +21,7 @@ jobs:
           fetch-depth: 1
 
       - name: Run Droid Auto Review
-        uses: Factory-AI/droid-action@main
+        uses: Factory-AI/droid-action@v1
         with:
           factory_api_key: ${{ secrets.FACTORY_API_KEY }}
           automatic_review: true

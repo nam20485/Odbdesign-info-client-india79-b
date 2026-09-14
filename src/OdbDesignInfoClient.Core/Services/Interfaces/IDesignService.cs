@@ -75,4 +75,10 @@ public interface IDesignService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>A list of parts.</returns>
     Task<IReadOnlyList<Part>> GetPartsAsync(string designId, string stepName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Clears all cached design data, forcing subsequent fetches to hit the server.
+    /// Call on design change, disconnect, reconnect, and explicit refresh.
+    /// </summary>
+    void ClearCache();
 }

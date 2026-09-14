@@ -70,7 +70,14 @@ public class DesignService : IDesignService
         try
         {
             var response = await _restApi.GetDesignNamesAsync(cancellationToken);
-            
+
+            if (response.StatusCode == HttpStatusCode.NoContent)
+            {
+                // The server returns 204 when no designs are loaded - not an error
+                _logger?.LogInformation("Server returned 204 No Content for design names - no designs available");
+                return [];
+            }
+
             if (!response.IsSuccessStatusCode)
             {
                 _logger?.LogError(
@@ -319,6 +326,7 @@ public class DesignService : IDesignService
                 : GetComponentsViaRestAsync(designId, cancellationToken));
 
             _componentCache[cacheKey] = components;
+            _componentCacheRefresh = DateTime.Now;
             return components;
         }
         catch (Exception ex)
@@ -454,6 +462,7 @@ public class DesignService : IDesignService
                 : GetNetsViaRestAsync(designId, cancellationToken));
 
             _netCache[cacheKey] = nets;
+            _netCacheRefresh = DateTime.Now;
             return nets;
         }
         catch (Exception ex)
@@ -590,7 +599,7 @@ public class DesignService : IDesignService
                 return new List<Layer>();
             }
 
-            var layerNames = JsonSerializer.Deserialize<List<string>>(response.Content, JsonOptions) ?? new List<string>();
+            var layerNames = ParseLayerNamesFromResponse(response.Content, designId, stepName);
             var layers = layerNames.Select((name, index) => new Layer
             {
                 Id = index,
@@ -600,6 +609,7 @@ public class DesignService : IDesignService
             }).ToList();
 
             _stackupCache[cacheKey] = layers;
+            _stackupCacheRefresh = DateTime.Now;
             return layers;
         }
         catch (Exception ex)
@@ -819,16 +829,11 @@ public class DesignService : IDesignService
     {
         _logger?.LogInformation("Getting drill tools for design {DesignId}, step {StepName}", designId, stepName);
 
-        try
-        {
-            // TODO: Implement when drill tools API is available
-            return [];
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogError(ex, "Failed to get drill tools for design {DesignId}, step {StepName}", designId, stepName);
-            throw;
-        }
+        // The server does not expose a drill-tools product-model route; the data
+        // lives in the per-step tools file and needs a dedicated endpoint first.
+        // The tab stays intentionally empty until that route exists.
+        await Task.CompletedTask;
+        return [];
     }
 
     /// <inheritdoc />
@@ -879,9 +884,11 @@ public class DesignService : IDesignService
         _designCache.Clear();
         _componentCache.Clear();
         _netCache.Clear();
+        _stackupCache.Clear();
         _designCacheRefresh = DateTime.MinValue;
         _componentCacheRefresh = DateTime.MinValue;
         _netCacheRefresh = DateTime.MinValue;
+        _stackupCacheRefresh = DateTime.MinValue;
     }
 
     /// <summary>
@@ -900,7 +907,7 @@ public class DesignService : IDesignService
         {
             using var doc = JsonDocument.Parse(content ?? "{}");
             var root = doc.RootElement;
-            
+
             if (root.TryGetProperty("steps", out var stepsArray))
             {
                 return stepsArray.EnumerateArray()
@@ -908,8 +915,44 @@ public class DesignService : IDesignService
                     .Where(s => !string.IsNullOrEmpty(s))
                     .ToList();
             }
-            
+
             _logger?.LogWarning("Unable to parse steps from response for design '{DesignName}'", designName);
+            return [];
+        }
+    }
+
+    /// <summary>
+    /// Parses layer names from the layer-list API response.
+    /// Accepts both the bare array format ("["layer-1", …]") and the
+    /// envelope format ("{ "layers": ["layer-1", …] }") the server emits.
+    /// </summary>
+    /// <param name="content">The raw JSON content from the API response.</param>
+    /// <param name="designId">The design identifier for logging purposes.</param>
+    /// <param name="stepName">The step name for logging purposes.</param>
+    /// <returns>List of layer names.</returns>
+    private List<string> ParseLayerNamesFromResponse(string? content, string designId, string stepName)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<string>>(content ?? "[]", JsonOptions) ?? [];
+        }
+        catch (JsonException)
+        {
+            using var doc = JsonDocument.Parse(content ?? "{}");
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("layers", out var layersArray))
+            {
+                return layersArray.EnumerateArray()
+                    .Select(e => e.GetString() ?? string.Empty)
+                    .Where(s => !string.IsNullOrEmpty(s))
+                    .ToList();
+            }
+
+            _logger?.LogWarning(
+                "Unable to parse layer names from response for design '{DesignId}', step '{StepName}'",
+                designId,
+                stepName);
             return [];
         }
     }

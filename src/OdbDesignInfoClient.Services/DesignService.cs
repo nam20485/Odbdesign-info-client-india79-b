@@ -5,6 +5,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Odb.Grpc;
+using OdbDesign.ProductModel;
+using OdbDesign.ProductModel.Models;
 using OdbDesignInfoClient.Core.Models;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Services.Api;
@@ -42,7 +44,9 @@ public class DesignService : IDesignService
     private readonly ConcurrentDictionary<string, IReadOnlyList<Component>> _componentCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Net>> _netCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Layer>> _stackupCache = new();
-    
+    private readonly ConcurrentDictionary<string, DesignProductModel> _productModelCache = new();
+    private readonly ProductModelReader _productModelReader;
+
     private DateTime _designCacheRefresh = DateTime.MinValue;
     private DateTime _componentCacheRefresh = DateTime.MinValue;
     private DateTime _netCacheRefresh = DateTime.MinValue;
@@ -60,6 +64,9 @@ public class DesignService : IDesignService
         _connectionService = connectionService;
         _restApi = restApi;
         _logger = logger;
+        _productModelReader = new ProductModelReader(
+            logger as ILogger<ProductModelReader>
+            ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ProductModelReader>.Instance);
     }
 
     /// <inheritdoc />
@@ -322,7 +329,7 @@ public class DesignService : IDesignService
         try
         {
             var components = await (_connectionService.IsGrpcAvailable
-                ? GetComponentsViaGrpcAsync(designId, cancellationToken)
+                ? GetComponentsViaGrpcAsync(designId, stepName, cancellationToken)
                 : GetComponentsViaRestAsync(designId, cancellationToken));
 
             _componentCache[cacheKey] = components;
@@ -336,47 +343,111 @@ public class DesignService : IDesignService
         }
     }
 
-    private async Task<List<Component>> GetComponentsViaGrpcAsync(string designId, CancellationToken cancellationToken)
+    private async Task<List<Component>> GetComponentsViaGrpcAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
-        var components = new List<Component>();
-        
-        if (!_connectionService.IsGrpcAvailable)
+        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        if (model is null)
         {
             return await GetComponentsViaRestAsync(designId, cancellationToken);
         }
-        
-        if (_connectionService is not ConnectionService connectionServiceImpl)
+
+        var components = model.Components.Select(MapComponentDetail).ToList();
+        _logger?.LogInformation("Loaded {Count} components via gRPC product model for {DesignId}/{StepName}", components.Count, designId, stepName);
+        return components;
+    }
+
+    /// <summary>
+    /// Fetches (and caches) the full product model for a design/step over gRPC by reading
+    /// the design's <c>FileModel</c>. Returns null when gRPC is unavailable or the model is
+    /// empty, so callers can fall back to the REST control-plane endpoints.
+    /// </summary>
+    /// <remarks>
+    /// The request leaves <c>include_normalized_lists</c> unset (false): the server prunes the
+    /// normalized nets/components/packages/parts collections to save bandwidth, and this reader
+    /// reconstructs them from the always-present <c>FileModel</c> (EDA data + per-layer component
+    /// and tools files) exactly as the 3D client does.
+    /// </remarks>
+    private async Task<DesignProductModel?> GetProductModelAsync(string designId, string stepName, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"{designId}:{stepName}";
+        if (_productModelCache.TryGetValue(cacheKey, out var cached))
         {
-            throw new InvalidOperationException("ConnectionService implementation is required for gRPC access");
+            return cached;
         }
-        
+
+        if (!_connectionService.IsGrpcAvailable ||
+            _connectionService is not ConnectionService connectionServiceImpl)
+        {
+            return null;
+        }
+
         var grpcClient = connectionServiceImpl.GrpcClient;
-        if (grpcClient == null)
+        if (grpcClient is null)
         {
-            return await GetComponentsViaRestAsync(designId, cancellationToken);
+            return null;
         }
 
         try
         {
             var request = new GetDesignRequest { DesignName = designId };
             var design = await grpcClient.GetDesignAsync(request, cancellationToken: cancellationToken);
-
-            foreach (var comp in design.Components)
+            var model = _productModelReader.Read(design, stepName);
+            if (model.Components.Count == 0 && model.Nets.Count == 0)
             {
-                var component = MapProtobufComponent(comp);
-                components.Add(component);
+                _logger?.LogWarning(
+                    "gRPC product model was empty for {DesignId}/{StepName}; falling back to REST",
+                    designId, stepName);
+                return null;
             }
 
-            _logger?.LogInformation("Loaded {Count} components via gRPC", components.Count);
+            _productModelCache[cacheKey] = model;
+            return model;
         }
         catch (Exception ex)
         {
-            _logger?.LogWarning(ex, "gRPC component fetch failed, falling back to REST");
-            return await GetComponentsViaRestAsync(designId, cancellationToken);
+            _logger?.LogWarning(ex, "gRPC product-model fetch failed for {DesignId}/{StepName}; falling back to REST", designId, stepName);
+            return null;
         }
-
-        return components;
     }
+
+    /// <summary>Maps a product-model <see cref="ComponentDetail"/> to the domain <see cref="Component"/>.</summary>
+    private static Component MapComponentDetail(ComponentDetail detail) => new()
+    {
+        RefDes = detail.Name,
+        PartName = detail.PartName ?? string.Empty,
+        Package = detail.Package?.Name ?? detail.PkgRef ?? string.Empty,
+        Side = detail.Side switch
+        {
+            Odb.Lib.Protobuf.BoardSide.Top => "Top",
+            Odb.Lib.Protobuf.BoardSide.Bottom => "Bottom",
+            _ => string.Empty,
+        },
+        Rotation = detail.Rotation,
+        X = detail.PositionX,
+        Y = detail.PositionY,
+        Pins = detail.Pins.Select(p => new Pin
+        {
+            Name = p.Name ?? p.PinNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            Number = (int)p.PinNumber,
+            NetName = p.NetName ?? string.Empty,
+            ElectricalType = string.Empty,
+        }).ToList(),
+    };
+
+    /// <summary>Maps a product-model <see cref="NetDetail"/> to the domain <see cref="Net"/>.</summary>
+    private static Net MapNetDetail(NetDetail detail) => new()
+    {
+        Name = detail.Name,
+        PinCount = detail.Connections.Count,
+        ViaCount = 0,
+        Features = detail.Connections.Select(c => new NetFeature
+        {
+            FeatureType = "Pin",
+            Id = c.PinNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ComponentRef = c.ComponentName,
+        }).ToList(),
+    };
+
 
     /// <summary>
     /// Fetches components via REST API with JSON deserialization.
@@ -458,7 +529,7 @@ public class DesignService : IDesignService
             List<Net> nets;
 
             nets = await (_connectionService.IsGrpcAvailable
-                ? GetNetsViaGrpcAsync(designId, cancellationToken)
+                ? GetNetsViaGrpcAsync(designId, stepName, cancellationToken)
                 : GetNetsViaRestAsync(designId, cancellationToken));
 
             _netCache[cacheKey] = nets;
@@ -472,45 +543,16 @@ public class DesignService : IDesignService
         }
     }
 
-    private async Task<List<Net>> GetNetsViaGrpcAsync(string designId, CancellationToken cancellationToken)
+    private async Task<List<Net>> GetNetsViaGrpcAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
-        var nets = new List<Net>();
-        
-        if (!_connectionService.IsGrpcAvailable)
-        {
-            return await GetNetsViaRestAsync(designId, cancellationToken);
-        }
-        
-        if (_connectionService is not ConnectionService connectionServiceImpl)
-        {
-            throw new InvalidOperationException("ConnectionService implementation is required for gRPC access");
-        }
-        
-        var grpcClient = connectionServiceImpl.GrpcClient;
-        if (grpcClient == null)
+        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        if (model is null)
         {
             return await GetNetsViaRestAsync(designId, cancellationToken);
         }
 
-        try
-        {
-            var request = new GetDesignRequest { DesignName = designId };
-            var design = await grpcClient.GetDesignAsync(request, cancellationToken: cancellationToken);
-
-            foreach (var net in design.Nets)
-            {
-                var mappedNet = MapProtobufNet(net);
-                nets.Add(mappedNet);
-            }
-
-            _logger?.LogInformation("Loaded {Count} nets via gRPC", nets.Count);
-        }
-        catch (Exception ex)
-        {
-            _logger?.LogWarning(ex, "gRPC net fetch failed, falling back to REST");
-            return await GetNetsViaRestAsync(designId, cancellationToken);
-        }
-
+        var nets = model.Nets.Select(MapNetDetail).ToList();
+        _logger?.LogInformation("Loaded {Count} nets via gRPC product model for {DesignId}/{StepName}", nets.Count, designId, stepName);
         return nets;
     }
 
@@ -734,51 +776,6 @@ public class DesignService : IDesignService
         _ => "#808080",
     };
 
-    private static Component MapProtobufComponent(Odb.Lib.Protobuf.ProductModel.Component proto)
-    {
-        // TODO: Get position and rotation from protobuf when available in schema
-        // For now, using defaults as these properties don't exist in current protobuf definition
-        // TODO: Map position and rotation from protobuf when available
-        var rotation = 0.0;
-        var x = 0.0;
-        var y = 0.0;
-
-        return new Component
-        {
-            RefDes = proto.RefDes ?? string.Empty,
-            PartName = proto.PartName ?? string.Empty,
-            Package = proto.Package?.Name ?? string.Empty,
-            Side = proto.Side == Odb.Lib.Protobuf.BoardSide.Top ? "Top" : "Bottom",
-            Rotation = rotation,
-            X = x,
-            Y = y,
-            Pins = []  // TODO: Map pins from protobuf when pin data is available
-        };
-    }
-
-    private static Net MapProtobufNet(Odb.Lib.Protobuf.ProductModel.Net proto)
-    {
-        var features = new List<NetFeature>();
-
-        foreach (var pinConnection in proto.PinConnections)
-        {
-            features.Add(new NetFeature
-            {
-                FeatureType = "Pin",
-                Id = pinConnection.Name ?? string.Empty,
-                ComponentRef = pinConnection.Component?.RefDes ?? string.Empty
-            });
-        }
-
-        return new Net
-        {
-            Name = proto.Name ?? string.Empty,
-            PinCount = proto.PinConnections.Count,
-            ViaCount = 0,
-            Features = features
-        };
-    }
-
     /// <summary>
     /// Maps a ComponentDto from REST API JSON to the domain Component model.
     /// </summary>
@@ -803,8 +800,8 @@ public class DesignService : IDesignService
             PartName = dto.PartName ?? string.Empty,
             Package = dto.Package?.Name ?? string.Empty,
             Side = MapBoardSide(dto.Side),
-            // Position and rotation not yet available in protobuf schema
-            // See TODO in MapProtobufComponent
+            // The REST component projection omits placement/rotation; the gRPC
+            // product-model path supplies real X/Y/rotation when available.
             Rotation = 0.0,
             X = 0.0,
             Y = 0.0,
@@ -938,33 +935,67 @@ public class DesignService : IDesignService
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrillTool>> GetDrillToolsAsync(
-        string designId, 
-        string stepName, 
+        string designId,
+        string stepName,
         CancellationToken cancellationToken = default)
     {
         _logger?.LogInformation("Getting drill tools for design {DesignId}, step {StepName}", designId, stepName);
 
-        // The server does not expose a drill-tools product-model route; the data
-        // lives in the per-step tools file and needs a dedicated endpoint first.
-        // The tab stays intentionally empty until that route exists.
-        await Task.CompletedTask;
-        return [];
+        // Drill tools live in the step's tools file inside the gRPC FileModel — the server
+        // exposes no REST route for them. Without gRPC the tab is intentionally empty.
+        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        if (model is null)
+        {
+            _logger?.LogInformation(
+                "Drill tools unavailable for {DesignId}/{StepName} (gRPC product model not available)",
+                designId, stepName);
+            return [];
+        }
+
+        return model.DrillTools
+            .Select(t => new DrillTool
+            {
+                ToolNumber = t.ToolNumber,
+                Diameter = t.DrillSizeMm,
+                Shape = t.ToolType,
+                IsPlated = t.IsPlated,
+                HitCount = 0,
+            })
+            .ToList();
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<Package>> GetPackagesAsync(
-        string designId, 
-        string stepName, 
+        string designId,
+        string stepName,
         CancellationToken cancellationToken = default)
     {
         _logger?.LogInformation("Getting packages for design {DesignId}, step {StepName}", designId, stepName);
 
+        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        if (model is not null)
+        {
+            return model.Packages.Select(MapPackageDetail).ToList();
+        }
+
+        // REST fallback: the /designs/{name}/packages control-plane endpoint.
         try
         {
-            // TODO: Implement when packages API is available
-            return [];
+            var response = await _restApi.GetPackagesAsync(designId, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotFound || string.IsNullOrWhiteSpace(response.Content))
+            {
+                return [];
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                HandleHttpError(response.StatusCode, designId, "packages");
+            }
+
+            var dtos = JsonSerializer.Deserialize<List<PackageDto>>(response.Content, JsonOptions) ?? [];
+            return dtos.Select(MapPackageDto).ToList();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not UnauthorizedAccessException and not InvalidOperationException)
         {
             _logger?.LogError(ex, "Failed to get packages for design {DesignId}, step {StepName}", designId, stepName);
             throw;
@@ -973,22 +1004,94 @@ public class DesignService : IDesignService
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<Part>> GetPartsAsync(
-        string designId, 
-        string stepName, 
+        string designId,
+        string stepName,
         CancellationToken cancellationToken = default)
     {
         _logger?.LogInformation("Getting parts for design {DesignId}, step {StepName}", designId, stepName);
 
+        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        if (model is not null)
+        {
+            return model.Parts
+                .Select(p => new Part { PartNumber = p.Name, UsageCount = p.UsageCount })
+                .ToList();
+        }
+
+        // REST fallback: the /designs/{name}/parts control-plane endpoint.
         try
         {
-            // TODO: Implement when parts API is available
-            return [];
+            var response = await _restApi.GetPartsAsync(designId, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotFound || string.IsNullOrWhiteSpace(response.Content))
+            {
+                return [];
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                HandleHttpError(response.StatusCode, designId, "parts");
+            }
+
+            var dtos = JsonSerializer.Deserialize<List<PartDto>>(response.Content, JsonOptions) ?? [];
+            return dtos.Select(MapPartDto).ToList();
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not UnauthorizedAccessException and not InvalidOperationException)
         {
             _logger?.LogError(ex, "Failed to get parts for design {DesignId}, step {StepName}", designId, stepName);
             throw;
         }
+    }
+
+    private static Package MapPackageDetail(PackageDetail detail) => new()
+    {
+        Name = detail.Name,
+        Pitch = detail.Pitch ?? 0d,
+        PinCount = detail.PinCount,
+        Width = detail.XMax - detail.XMin,
+        Height = detail.YMax - detail.YMin,
+    };
+
+    private static Package MapPackageDto(PackageDto dto) => new()
+    {
+        Name = dto.Name ?? string.Empty,
+        Pitch = dto.Pitch ?? 0d,
+        PinCount = dto.Pins?.Count ?? 0,
+        Width = (dto.XMax ?? 0f) - (dto.XMin ?? 0f),
+        Height = (dto.YMax ?? 0f) - (dto.YMin ?? 0f),
+    };
+
+    private static Part MapPartDto(PartDto dto)
+    {
+        var attrs = dto.Attributes;
+        return new Part
+        {
+            PartNumber = dto.Name ?? string.Empty,
+            Manufacturer = TryGetAttr(attrs, "MANUFACTURER", "MFR", "VENDOR"),
+            Description = TryGetAttr(attrs, "DESCRIPTION", "DESC", "VALUE"),
+            UsageCount = 0,
+        };
+    }
+
+    private static string TryGetAttr(IDictionary<string, string>? attrs, params string[] keys)
+    {
+        if (attrs is null)
+        {
+            return string.Empty;
+        }
+
+        foreach (var key in keys)
+        {
+            foreach (var kvp in attrs)
+            {
+                if (string.Equals(kvp.Key, key, StringComparison.OrdinalIgnoreCase) &&
+                    !string.IsNullOrWhiteSpace(kvp.Value))
+                {
+                    return kvp.Value;
+                }
+            }
+        }
+
+        return string.Empty;
     }
 
     /// <summary>
@@ -1000,6 +1103,7 @@ public class DesignService : IDesignService
         _componentCache.Clear();
         _netCache.Clear();
         _stackupCache.Clear();
+        _productModelCache.Clear();
         _designCacheRefresh = DateTime.MinValue;
         _componentCacheRefresh = DateTime.MinValue;
         _netCacheRefresh = DateTime.MinValue;

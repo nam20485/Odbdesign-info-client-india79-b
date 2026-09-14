@@ -22,14 +22,17 @@ namespace OdbDesignInfoClient.IntegrationTests;
 public class ServerIntegrationTests
 {
     private const string DefaultBaseUrl = "https://debian13vm.tail11ba79.ts.net";
+    private const string DefaultGrpcUrl = "http://debian13vm.tail11ba79.ts.net:50051";
 
     private readonly ITestOutputHelper _output;
     private readonly string _baseUrl;
+    private readonly string _grpcUrl;
 
     public ServerIntegrationTests(ITestOutputHelper output)
     {
         _output = output;
         _baseUrl = Environment.GetEnvironmentVariable("ODBDESIGN_REST_URL") ?? DefaultBaseUrl;
+        _grpcUrl = Environment.GetEnvironmentVariable("ODBDESIGN_GRPC_URL") ?? DefaultGrpcUrl;
     }
 
     private bool TryCreateClient(out DesignService designService, out string skipReason, bool withCredentials = true)
@@ -190,6 +193,79 @@ public class ServerIntegrationTests
             () => sut.GetComponentsAsync("sample_design", "step"));
 
         _output.WriteLine($"Received expected auth error: {ex.Message}");
+    }
+
+    [Fact]
+    public async Task Live_GrpcProductModel_PopulatesComponentsPackagesPartsAndDrills()
+    {
+        var (sut, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // One gRPC GetDesign (normalized lists pruned) → the shared ProductModelReader
+        // reconstructs components/nets/pins/packages/parts/drill from the FileModel.
+        var comps = await sut.GetComponentsAsync("sample_design", "step");
+        var pkgs = await sut.GetPackagesAsync("sample_design", "step");
+        var parts = await sut.GetPartsAsync("sample_design", "step");
+        var drills = await sut.GetDrillToolsAsync("sample_design", "step");
+
+        _output.WriteLine(
+            $"gRPC product model: components={comps.Count} packages={pkgs.Count} parts={parts.Count} drills={drills.Count}");
+
+        Assert.True(comps.Count > 100, $"expected the full component list, got {comps.Count}");
+        // Real placement comes from the FileModel (the REST projection has X/Y = 0).
+        Assert.Contains(comps, c => c.X != 0 || c.Y != 0);
+        Assert.Contains(comps, c => c.Pins.Count > 0);
+        Assert.NotEmpty(pkgs);
+        Assert.NotEmpty(parts);
+        Assert.Contains(parts, p => p.UsageCount > 0);
+        Assert.NotEmpty(drills);
+
+        var sample = comps.First(c => c.Pins.Count > 0);
+        _output.WriteLine(
+            $"sample component {sample.RefDes}: part={sample.PartName} pkg={sample.Package} " +
+            $"x={sample.X:F3} y={sample.Y:F3} rot={sample.Rotation} pins={sample.Pins.Count}");
+    }
+
+    /// <summary>
+    /// Builds a DesignService backed by a real gRPC connection (REST health check + gRPC
+    /// channel), or returns a skip reason when credentials/gRPC are unavailable.
+    /// </summary>
+    private async Task<(DesignService? Service, string Skip)> TryCreateGrpcClientAsync()
+    {
+        var auth = new BasicAuthService();
+        if (!auth.IsAuthenticated)
+        {
+            return (null, "No credentials found (set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD).");
+        }
+
+        var handler = new AuthHeaderHandler(auth) { InnerHandler = new SocketsHttpHandler() };
+        var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(_baseUrl),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        var restApi = RestService.For<IOdbDesignRestApi>(httpClient);
+
+        var connection = new ConnectionService(restApi, auth);
+        var config = new ServerConnectionConfig
+        {
+            Host = new Uri(_baseUrl).Host,
+            RestUrlOverride = _baseUrl,
+            GrpcUrlOverride = _grpcUrl,
+            GrpcUseTls = _grpcUrl.StartsWith("https", StringComparison.OrdinalIgnoreCase),
+        };
+
+        var connected = await connection.ConnectAsync(config);
+        if (!connected || !connection.IsGrpcAvailable)
+        {
+            return (null, $"gRPC unavailable (connected={connected}, grpc={connection.IsGrpcAvailable}) at {_grpcUrl}");
+        }
+
+        return (new DesignService(connection, restApi), string.Empty);
     }
 
     /// <summary>

@@ -36,6 +36,9 @@ public partial class ComponentsTabViewModel : ViewModelBase
     private IReadOnlyList<Component> _allComponents = [];
     private string? _currentDesignId;
     private string? _currentStepName;
+    private string? _loadedDesignId;
+    private string? _loadedStepName;
+    private CancellationTokenSource? _filterDebounceCts;
 
     /// <summary>
     /// Initializes a new instance of ComponentsTabViewModel.
@@ -52,21 +55,41 @@ public partial class ComponentsTabViewModel : ViewModelBase
 
     /// <summary>
     /// Loads components for the specified design and step.
+    /// Loads once per design/step; repeat activations reuse the in-memory data
+    /// unless <paramref name="forceReload"/> is set (Refresh command).
     /// </summary>
-    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default)
+    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default, bool forceReload = false)
     {
         if (string.IsNullOrEmpty(designId) || string.IsNullOrEmpty(stepName))
+            return;
+
+        if (!forceReload && _loadedDesignId == designId && _loadedStepName == stepName)
             return;
 
         _currentDesignId = designId;
         _currentStepName = stepName;
 
         IsLoading = true;
+        ClearError();
         try
         {
             _allComponents = await _designService.GetComponentsAsync(designId, stepName, cancellationToken);
             TotalCount = _allComponents.Count;
             ApplyFilter();
+            _loadedDesignId = designId;
+            _loadedStepName = stepName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            SetError("Authentication failed (401). Set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD and restart.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Failed to load components: {ex.Message}");
         }
         finally
         {
@@ -82,13 +105,30 @@ public partial class ComponentsTabViewModel : ViewModelBase
     {
         if (_currentDesignId != null && _currentStepName != null)
         {
-            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken);
+            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
     }
 
     partial void OnFilterTextChanged(string value)
     {
-        ApplyFilter();
+        // Debounced: don't rebuild the row collection on every keystroke
+        _filterDebounceCts?.Cancel();
+        _filterDebounceCts?.Dispose();
+        _filterDebounceCts = new CancellationTokenSource();
+        _ = DebouncedApplyFilterAsync(_filterDebounceCts.Token);
+    }
+
+    private async Task DebouncedApplyFilterAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(300, cancellationToken);
+            ApplyFilter();
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer keystroke
+        }
     }
 
     partial void OnSelectedComponentChanged(ComponentRowViewModel? value)
@@ -136,7 +176,11 @@ public partial class ComponentsTabViewModel : ViewModelBase
     /// </summary>
     public void NavigateToComponent(string refDes)
     {
+        // Apply the filter immediately rather than waiting out the debounce
+        _filterDebounceCts?.Cancel();
         FilterText = refDes;
+        ApplyFilter();
+
         var component = Components.FirstOrDefault(c => c.RefDes.Equals(refDes, StringComparison.OrdinalIgnoreCase));
         if (component != null)
         {

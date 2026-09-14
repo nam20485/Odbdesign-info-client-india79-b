@@ -7,7 +7,7 @@
              x:Class="OdbDesignInfoClient.Views.ComponentsTabView"
              x:DataType="vm:ComponentsTabViewModel">
 
-    <Grid RowDefinitions="Auto,*,Auto">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
         <!-- Filter Bar -->
         <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <Grid ColumnDefinitions="Auto,*,Auto">
@@ -26,8 +26,21 @@
             </Grid>
         </Border>
 
+        <!-- Error Banner -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding HasError}"
+                Background="#33F44336"
+                BorderBrush="#FFF44336"
+                BorderThickness="0,0,0,1"
+                Padding="8,4"
+                ZIndex="99">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
+        </Border>
+
+
+
         <!-- Loading Overlay -->
-        <Border Grid.Row="1" 
+        <Border Grid.Row="2" 
                 IsVisible="{Binding IsLoading}"
                 Background="#80000000"
                 ZIndex="100">
@@ -41,7 +54,7 @@
         </Border>
 
         <!-- Data Grid -->
-        <DataGrid Grid.Row="1"
+        <DataGrid Grid.Row="2"
                   ItemsSource="{Binding Components}"
                   SelectedItem="{Binding SelectedComponent}"
                   CanUserResizeColumns="True"
@@ -61,7 +74,7 @@
         </DataGrid>
 
         <!-- Status Bar -->
-        <Border Grid.Row="2" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <Border Grid.Row="3" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="Showing "/>
                 <TextBlock Text="{Binding FilteredCount}"/>

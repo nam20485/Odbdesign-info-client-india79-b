@@ -27,6 +27,8 @@ public partial class StackupTabViewModel : ViewModelBase
 
     private string? _currentDesignId;
     private string? _currentStepName;
+    private string? _loadedDesignId;
+    private string? _loadedStepName;
 
     /// <summary>
     /// Initializes a new instance of StackupTabViewModel.
@@ -38,16 +40,22 @@ public partial class StackupTabViewModel : ViewModelBase
 
     /// <summary>
     /// Loads the layer stackup for the specified design and step.
+    /// Loads once per design/step; repeat activations reuse the in-memory data
+    /// unless <paramref name="forceReload"/> is set (Refresh command).
     /// </summary>
-    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default)
+    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default, bool forceReload = false)
     {
         if (string.IsNullOrEmpty(designId) || string.IsNullOrEmpty(stepName))
+            return;
+
+        if (!forceReload && _loadedDesignId == designId && _loadedStepName == stepName)
             return;
 
         _currentDesignId = designId;
         _currentStepName = stepName;
 
         IsLoading = true;
+        ClearError();
         try
         {
             var layers = await _designService.GetStackupAsync(designId, stepName, cancellationToken);
@@ -59,6 +67,20 @@ public partial class StackupTabViewModel : ViewModelBase
             }
 
             TotalLayers = Layers.Count;
+            _loadedDesignId = designId;
+            _loadedStepName = stepName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            SetError("Authentication failed (401). Set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD and restart.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Failed to load stackup: {ex.Message}");
         }
         finally
         {
@@ -74,7 +96,7 @@ public partial class StackupTabViewModel : ViewModelBase
     {
         if (_currentDesignId != null && _currentStepName != null)
         {
-            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken);
+            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
     }
 }

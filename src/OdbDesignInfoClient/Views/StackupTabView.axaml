@@ -7,7 +7,7 @@
              x:Class="OdbDesignInfoClient.Views.StackupTabView"
              x:DataType="vm:StackupTabViewModel">
 
-    <Grid RowDefinitions="Auto,*,Auto">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
         <!-- Header -->
         <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <Grid ColumnDefinitions="*,Auto">
@@ -22,8 +22,21 @@
             </Grid>
         </Border>
 
+        <!-- Error Banner -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding HasError}"
+                Background="#33F44336"
+                BorderBrush="#FFF44336"
+                BorderThickness="0,0,0,1"
+                Padding="8,4"
+                ZIndex="99">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
+        </Border>
+
+
+
         <!-- Loading Overlay -->
-        <Border Grid.Row="1" 
+        <Border Grid.Row="2" 
                 IsVisible="{Binding IsLoading}"
                 Background="#80000000"
                 ZIndex="100">
@@ -37,7 +50,7 @@
         </Border>
 
         <!-- Layer List -->
-        <ScrollViewer Grid.Row="1" Padding="8">
+        <ScrollViewer Grid.Row="2" Padding="8">
             <ItemsControl ItemsSource="{Binding Layers}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:LayerRowViewModel}">
@@ -84,7 +97,7 @@
         </ScrollViewer>
 
         <!-- Status Bar -->
-        <Border Grid.Row="2" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <Border Grid.Row="3" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <TextBlock>
                 <Run Text="Total: "/>
                 <Run Text="{Binding TotalLayers}"/>

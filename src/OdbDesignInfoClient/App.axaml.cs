@@ -69,26 +69,22 @@ public partial class App : Application
 
         Log.Information("OdbDesignInfoClient starting...");
 
-        // Read server configuration
-        var serverHost = configuration["Server:Host"] ?? "localhost";
-        var serverPort = configuration.GetValue<int>("Server:RestPort", 8888);
-        var grpcPort = configuration.GetValue<int>("Server:GrpcPort", 50051);
-        var useHttps = configuration.GetValue<bool>("Server:UseHttps", false);
-        var protocol = useHttps ? "https" : "http";
-        var restBaseUrl = $"{protocol}://{serverHost}:{serverPort}";
-
-        Log.Information("Configuring REST client for {BaseUrl}", restBaseUrl);
-        Log.Information("Configuring gRPC client for {Protocol}://{Host}:{Port}", protocol, serverHost, grpcPort);
-
-        // Create server configuration
+        // Read server configuration. Precedence: environment variables > appsettings.json > defaults.
         var serverConfig = new ServerConnectionConfig
         {
-            Host = serverHost,
-            RestPort = serverPort,
-            GrpcPort = grpcPort,
-            UseHttps = useHttps,
-            TimeoutSeconds = configuration.GetValue<int>("Server:TimeoutSeconds", 30)
+            Host = configuration["Server:Host"] ?? "debian13vm.tail11ba79.ts.net",
+            RestPort = configuration.GetValue("Server:RestPort", 443),
+            GrpcPort = configuration.GetValue("Server:GrpcPort", 50051),
+            UseHttps = configuration.GetValue<bool>("Server:UseHttps", true),
+            GrpcUseTls = configuration.GetValue<bool>("Server:GrpcUseTls", false),
+            TimeoutSeconds = configuration.GetValue("Server:TimeoutSeconds", 30),
+            RestUrlOverride = Environment.GetEnvironmentVariable("ODBDESIGN_REST_URL"),
+            GrpcUrlOverride = Environment.GetEnvironmentVariable("ODBDESIGN_GRPC_URL"),
         };
+        var restBaseUrl = serverConfig.RestBaseUrl;
+
+        Log.Information("Configuring REST client for {BaseUrl}", restBaseUrl);
+        Log.Information("Configuring gRPC client for {GrpcBaseUrl}", serverConfig.GrpcBaseUrl);
 
         // Configure services
         var services = new ServiceCollection();
@@ -106,31 +102,35 @@ public partial class App : Application
                 DataContext = mainViewModel
             };
 
-            // Check for auto-connect argument
-            var autoConnect = CommandLineArgs.Any(arg => 
-                arg.Equals("--auto-connect", StringComparison.OrdinalIgnoreCase) ||
-                arg.Equals("-ac", StringComparison.OrdinalIgnoreCase));
+            // Auto-connect on launch by default (per spec acceptance criteria);
+            // opt out with --no-auto-connect / -nac, legacy --auto-connect / -ac is a no-op
+            var autoConnect = !CommandLineArgs.Any(arg =>
+                arg.Equals("--no-auto-connect", StringComparison.OrdinalIgnoreCase) ||
+                arg.Equals("-nac", StringComparison.OrdinalIgnoreCase));
 
-            if (autoConnect)
-            {
-                Log.Information("Auto-connect enabled via CLI argument");
-            }
+            Log.Information("Auto-connect: {AutoConnect}", autoConnect);
 
-            // Initialize the view model after window is created
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await mainViewModel.InitializeAsync(autoConnect);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "Failed to initialize MainViewModel");
-                }
-            });
+            // Initialize the view model after window is created. Run on the UI thread
+            // so observable-property updates raised during init keep dispatcher affinity.
+            _ = InitializeViewModelAsync(mainViewModel, autoConnect);
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Runs view model initialization as a fire-and-forget task with top-level error logging.
+    /// </summary>
+    private static async Task InitializeViewModelAsync(MainViewModel mainViewModel, bool autoConnect)
+    {
+        try
+        {
+            await mainViewModel.InitializeAsync(autoConnect);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to initialize MainViewModel");
+        }
     }
 
     private static void ConfigureServices(IServiceCollection services, IConfiguration configuration, ServerConnectionConfig serverConfig, string restBaseUrl)
@@ -139,8 +139,8 @@ public partial class App : Application
         services.AddSingleton(configuration);
         services.AddSingleton(serverConfig);
 
-        // Register all OdbDesignInfoClient services with configured base URL
-        services.AddOdbDesignInfoClientServices(restBaseUrl);
+        // Register all OdbDesignInfoClient services with configured base URL and timeout
+        services.AddOdbDesignInfoClientServices(restBaseUrl, serverConfig.TimeoutSeconds);
 
         // Register Tab ViewModels as Transient (new instance per request)
         services.AddTransient<ComponentsTabViewModel>();

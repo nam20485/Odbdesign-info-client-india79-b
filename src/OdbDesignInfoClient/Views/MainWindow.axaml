@@ -20,13 +20,12 @@
             <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
                 <!-- Connection Indicator -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                    <Ellipse Width="12" Height="12" x:Name="ConnectionIndicator">
-                        <Ellipse.Styles>
-                            <Style Selector="Ellipse">
-                                <Setter Property="Fill" Value="Gray"/>
-                            </Style>
-                        </Ellipse.Styles>
-                    </Ellipse>
+                    <Panel Width="12" Height="12">
+                        <Ellipse Width="12" Height="12" Fill="#FF4CAF50" IsVisible="{Binding IsConnected}"/>
+                        <Ellipse Width="12" Height="12" Fill="#FFFFC107" IsVisible="{Binding IsReconnecting}"/>
+                        <Ellipse Width="12" Height="12" Fill="#FF9E9E9E" IsVisible="{Binding IsConnecting}"/>
+                        <Ellipse Width="12" Height="12" Fill="#FFF44336" IsVisible="{Binding IsDisconnected}"/>
+                    </Panel>
                     <TextBlock Text="Server" VerticalAlignment="Center" FontWeight="SemiBold"/>
                 </StackPanel>
 
@@ -99,13 +98,10 @@
                 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" Margin="16,0">
                     <TextBlock Text="Viewer:" VerticalAlignment="Center"/>
-                    <Ellipse Width="8" Height="8" x:Name="ViewerIndicator">
-                        <Ellipse.Styles>
-                            <Style Selector="Ellipse">
-                                <Setter Property="Fill" Value="Gray"/>
-                            </Style>
-                        </Ellipse.Styles>
-                    </Ellipse>
+                    <Panel Width="8" Height="8">
+                        <Ellipse Width="8" Height="8" Fill="#FF4CAF50" IsVisible="{Binding IsViewerConnected}"/>
+                        <Ellipse Width="8" Height="8" Fill="#FF9E9E9E" IsVisible="{Binding !IsViewerConnected}"/>
+                    </Panel>
                 </StackPanel>
                 
                 <TextBlock Grid.Column="3" 

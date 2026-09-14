@@ -450,6 +450,136 @@ public class DesignServiceTests
         Assert.Equal("top_copper", result[0].Name);
     }
 
+    [Fact]
+    public async Task GetStackupAsync_ParsesEnvelopeFormat_WhenServerReturnsLayersObject()
+    {
+        // Arrange - the server wraps the layer list in a "layers" envelope
+        var envelopeJson = """{"layers":["board-outline.doc","comp_+_top","dielectric1","layer-1","soldermask-top"]}""";
+        _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(envelopeJson));
+
+        // Act
+        var result = await _sut.GetStackupAsync("design-1", "step");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(5, result.Count);
+        Assert.Equal("board-outline.doc", result[0].Name);
+        Assert.Equal("soldermask-top", result[4].Name);
+    }
+
+    [Fact]
+    public async Task GetDesignsAsync_ReturnsEmptyList_WhenServerReturnsNoContent()
+    {
+        // Arrange - the server returns 204 when no designs are loaded
+        var response = new ApiResponse<string>(
+            new HttpResponseMessage(HttpStatusCode.NoContent),
+            null,
+            new RefitSettings());
+        _mockRestApi.Setup(x => x.GetDesignNamesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act
+        var result = await _sut.GetDesignsAsync();
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetComponentsAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleComponentsJson));
+
+        // Act
+        var first = await _sut.GetComponentsAsync("design-1", "pcb");
+        var second = await _sut.GetComponentsAsync("design-1", "pcb");
+
+        // Assert - both calls succeed from one HTTP round trip (cache hit)
+        Assert.Equal(2, first.Count);
+        Assert.Equal(2, second.Count);
+        _mockRestApi.Verify(
+            x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetNetsAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetNetsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleNetsJson));
+
+        // Act
+        _ = await _sut.GetNetsAsync("design-1", "pcb");
+        _ = await _sut.GetNetsAsync("design-1", "pcb");
+
+        // Assert
+        _mockRestApi.Verify(
+            x => x.GetNetsAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetStackupAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
+    {
+        // Arrange
+        var layerNamesJson = """["top_copper", "bottom_copper"]""";
+        _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(layerNamesJson));
+
+        // Act
+        _ = await _sut.GetStackupAsync("design-1", "pcb");
+        _ = await _sut.GetStackupAsync("design-1", "pcb");
+
+        // Assert
+        _mockRestApi.Verify(
+            x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task ClearCache_ForcesRefetchOnNextCall()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleComponentsJson));
+
+        // Act
+        _ = await _sut.GetComponentsAsync("design-1", "pcb");
+        _sut.ClearCache();
+        _ = await _sut.GetComponentsAsync("design-1", "pcb");
+
+        // Assert - cache cleared, second load hits the server again
+        _mockRestApi.Verify(
+            x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task GetComponentsAsync_DifferentStep_BypassesCacheAndRefetches()
+    {
+        // Arrange - step is part of the cache key
+        _mockRestApi
+            .Setup(x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleComponentsJson));
+
+        // Act
+        _ = await _sut.GetComponentsAsync("design-1", "pcb");
+        _ = await _sut.GetComponentsAsync("design-1", "panel");
+
+        // Assert
+        _mockRestApi.Verify(
+            x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+    }
+
     #region Test Helpers
 
     /// <summary>

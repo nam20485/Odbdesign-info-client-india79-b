@@ -14,12 +14,16 @@ public class ServerConnectionConfigTests
         // Arrange & Act
         var config = new ServerConnectionConfig();
 
-        // Assert
+        // Assert - defaults target the standard deployment:
+        // HTTPS REST via ingress on 443, plaintext gRPC on 50051
         Assert.Equal("localhost", config.Host);
-        Assert.Equal(8888, config.RestPort);
+        Assert.Equal(443, config.RestPort);
         Assert.Equal(50051, config.GrpcPort);
         Assert.Equal(30, config.TimeoutSeconds);
-        Assert.False(config.UseHttps);
+        Assert.True(config.UseHttps);
+        Assert.False(config.GrpcUseTls);
+        Assert.Null(config.RestUrlOverride);
+        Assert.Null(config.GrpcUrlOverride);
     }
 
     [Fact]
@@ -56,6 +60,62 @@ public class ServerConnectionConfigTests
 
         // Assert
         Assert.Equal("http://server.local:50051", url);
+    }
+
+    [Fact]
+    public void GrpcBaseUrl_StaysPlaintext_WhenOnlyRestUsesHttps()
+    {
+        // Arrange - standard deployment: HTTPS REST at the ingress,
+        // plaintext h2c gRPC on a separate port
+        var config = new ServerConnectionConfig
+        {
+            Host = "debian13vm.tail11ba79.ts.net",
+            RestPort = 443,
+            GrpcPort = 50051,
+            UseHttps = true,
+            GrpcUseTls = false,
+        };
+
+        // Act & Assert
+        Assert.Equal("https://debian13vm.tail11ba79.ts.net:443", config.RestBaseUrl);
+        Assert.Equal("http://debian13vm.tail11ba79.ts.net:50051", config.GrpcBaseUrl);
+    }
+
+    [Fact]
+    public void GrpcBaseUrl_ReturnsHttpsUrl_WhenGrpcUseTlsIsTrue()
+    {
+        // Arrange
+        var config = new ServerConnectionConfig
+        {
+            Host = "server.local",
+            GrpcPort = 50051,
+            GrpcUseTls = true,
+        };
+
+        // Act
+        var url = config.GrpcBaseUrl;
+
+        // Assert
+        Assert.Equal("https://server.local:50051", url);
+    }
+
+    [Fact]
+    public void UrlOverrides_TakePrecedenceOverHostPortSettings()
+    {
+        // Arrange - env-var supplied full URLs win over host/port/scheme
+        var config = new ServerConnectionConfig
+        {
+            Host = "ignored.local",
+            RestPort = 1234,
+            GrpcPort = 5678,
+            UseHttps = false,
+            RestUrlOverride = "https://override.example.com",
+            GrpcUrlOverride = "http://grpc-override.example.com:50051",
+        };
+
+        // Act & Assert
+        Assert.Equal("https://override.example.com", config.RestBaseUrl);
+        Assert.Equal("http://grpc-override.example.com:50051", config.GrpcBaseUrl);
     }
 
     [Fact]

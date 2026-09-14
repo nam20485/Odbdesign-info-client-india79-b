@@ -112,7 +112,7 @@ public class ServerIntegrationTests
     }
 
     [Fact]
-    public async Task Live_GetStackup_ParsesLayerListEnvelope()
+    public async Task Live_GetStackup_ReturnsMatrixLayersWithAuthoritativeTypes()
     {
         if (!TryCreateClient(out var sut, out var skip))
         {
@@ -124,13 +124,36 @@ public class ServerIntegrationTests
         var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
-        // The server returns {"layers":[...]} — this validates the envelope parsing live
+        // The server's /matrix/matrix projection gives real layer types, stack order, and
+        // display colors — this validates the authoritative parse end to end.
         var layers = await sut.GetStackupAsync(design!.Id, design.Steps[0]);
 
-        _output.WriteLine($"Design '{design.Id}': {layers.Count} layers ({string.Join(", ", layers.Take(8).Select(l => l.Name))}…)");
+        _output.WriteLine($"Design '{design.Id}': {layers.Count} layers");
         Assert.NotEmpty(layers);
-        Assert.All(layers.Take(5), l => Assert.False(string.IsNullOrEmpty(l.Name)));
+        Assert.All(layers, l => Assert.False(string.IsNullOrEmpty(l.Name)));
+
+        // Types come from the server, not name heuristics: sample_design has Dielectric + Drill rows.
+        Assert.Contains(layers, l => l.Type == "Dielectric");
+        Assert.Contains(layers, l => l.Type == "Drill");
+
+        // Stack order is 1-based and monotonic (top to bottom).
+        Assert.Equal(1, layers.Min(l => l.StackOrder));
+        Assert.True(layers.Max(l => l.StackOrder) >= layers.Count / 2);
+
+        // Dielectric layers carry a real server color (not a type default).
+        var dielectric = layers.First(l => l.Type == "Dielectric");
+        Assert.StartsWith("#", dielectric.ColorHex);
+
+        // A drill layer carries its span boundaries.
+        var drill = layers.First(l => l.Type == "Drill");
+        Assert.False(string.IsNullOrEmpty(drill.StartLayer));
+        Assert.False(string.IsNullOrEmpty(drill.EndLayer));
+
+        _output.WriteLine(
+            $"Top 8: {string.Join(", ", layers.Take(8).Select(l => $"{l.StackOrder}:{l.Name}({l.Type})"))}");
+        _output.WriteLine($"Drill span: {drill.StartLayer} → {drill.EndLayer}; dielectric color {dielectric.ColorHex}");
     }
+
 
     [Fact]
     public async Task Live_GetNets_ReturnsNetsForLoadedDesign()

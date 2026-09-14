@@ -591,26 +591,48 @@ public class DesignService : IDesignService
 
         try
         {
-            var response = await _restApi.GetLayerNamesAsync(designId, stepName, cancellationToken);
-            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(response.Content))
+            var matrixResponse = await _restApi.GetMatrixAsync(designId, cancellationToken);
+            if (matrixResponse.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(matrixResponse.Content))
             {
-                _logger?.LogWarning("Failed to get layer names for design {DesignId}, step {StepName}. Status: {StatusCode}", 
-                    designId, stepName, response.StatusCode);
+                var layers = ParseMatrixLayers(matrixResponse.Content, designId);
+                if (layers.Count > 0)
+                {
+                    _stackupCache[cacheKey] = layers;
+                    _stackupCacheRefresh = DateTime.Now;
+                    return layers;
+                }
+            }
+            else
+            {
+                _logger?.LogWarning(
+                    "Matrix fetch failed for design {DesignId} (status {StatusCode}); falling back to layer names. Stackup detail will be limited.",
+                    designId,
+                    matrixResponse.StatusCode);
+            }
+
+            // Fallback: matrix route unavailable or empty — build a minimal stackup from the
+            // per-step layer-name list (type guessed from name; no color/stack-order/drill span).
+            var namesResponse = await _restApi.GetLayerNamesAsync(designId, stepName, cancellationToken);
+            if (!namesResponse.IsSuccessStatusCode || string.IsNullOrWhiteSpace(namesResponse.Content))
+            {
+                _logger?.LogWarning("Failed to get layer names for design {DesignId}, step {StepName}. Status: {StatusCode}",
+                    designId, stepName, namesResponse.StatusCode);
                 return new List<Layer>();
             }
 
-            var layerNames = ParseLayerNamesFromResponse(response.Content, designId, stepName);
-            var layers = layerNames.Select((name, index) => new Layer
+            var layerNames = ParseLayerNamesFromResponse(namesResponse.Content, designId, stepName);
+            var fallbackLayers = layerNames.Select((name, index) => new Layer
             {
                 Id = index,
+                StackOrder = index + 1,
                 Name = name,
                 Type = DetermineLayerType(name),
-                Polarity = "Positive"
+                ColorHex = ColorForLayerType(DetermineLayerType(name))
             }).ToList();
 
-            _stackupCache[cacheKey] = layers;
+            _stackupCache[cacheKey] = fallbackLayers;
             _stackupCacheRefresh = DateTime.Now;
-            return layers;
+            return fallbackLayers;
         }
         catch (Exception ex)
         {
@@ -618,6 +640,99 @@ public class DesignService : IDesignService
             throw;
         }
     }
+
+    /// <summary>
+    /// Parses the design-matrix projection into <see cref="Layer"/> records, sorting by the
+    /// physical stack row and carrying the server's authoritative type, display color, and
+    /// drill-span boundaries.
+    /// </summary>
+    /// <param name="content">The raw matrix JSON from the API response.</param>
+    /// <param name="designId">The design identifier for logging purposes.</param>
+    /// <returns>The ordered stackup layers; empty when the matrix has no layers.</returns>
+    private List<Layer> ParseMatrixLayers(string? content, string designId)
+    {
+        try
+        {
+            var matrix = JsonSerializer.Deserialize<MatrixDto>(content ?? "{}", JsonOptions);
+            if (matrix?.Layers is null || matrix.Layers.Count == 0)
+            {
+                _logger?.LogWarning("Matrix response contained no layers for design {DesignId}", designId);
+                return [];
+            }
+
+            var layers = new List<Layer>(matrix.Layers.Count);
+            foreach (var row in matrix.Layers.OrderBy(l => l.Row))
+            {
+                var type = string.IsNullOrEmpty(row.Type) ? "Signal" : row.Type;
+                layers.Add(new Layer
+                {
+                    Id = (int)row.Row,
+                    StackOrder = (int)row.Row,
+                    Name = row.Name ?? string.Empty,
+                    Type = type,
+                    ColorHex = ResolveLayerColor(row.Color, type),
+                    StartLayer = row.StartName,
+                    EndLayer = row.EndName,
+                });
+            }
+
+            _logger?.LogInformation(
+                "Parsed {Count} stackup layers from design matrix for {DesignId}",
+                layers.Count,
+                designId);
+            return layers;
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogError(
+                ex,
+                "Failed to parse design matrix JSON for {DesignId} at position {Position}",
+                designId,
+                ex.BytePositionInLine);
+            throw new InvalidOperationException($"Failed to parse stackup matrix: {ex.Message}", ex);
+        }
+    }
+
+    /// <summary>
+    /// Converts a matrix layer color to a display hex string, falling back to a type-based
+    /// default when the design declares no preferred color.
+    /// </summary>
+    /// <param name="color">The color from the matrix response (may be null).</param>
+    /// <param name="layerType">The resolved layer type used for the fallback color.</param>
+    /// <returns>A <c>#RRGGBB</c> string.</returns>
+    private static string ResolveLayerColor(MatrixColorDto? color, string layerType)
+    {
+        if (color is null || color.NoPreference)
+        {
+            return ColorForLayerType(layerType);
+        }
+
+        return FormattableString.Invariant($"#{ToHex(color.Red)}{ToHex(color.Green)}{ToHex(color.Blue)}");
+    }
+
+    private static string ToHex(uint channel) => Math.Min(channel, 255u).ToString("X2");
+
+    /// <summary>
+    /// Returns a conventional display color for a layer type when the design specifies none.
+    /// </summary>
+    /// <param name="layerType">The normalized layer type.</param>
+    /// <returns>A <c>#RRGGBB</c> string.</returns>
+    private static string ColorForLayerType(string layerType) => layerType switch
+    {
+        "Signal" => "#4CAF50",
+        "Mixed" => "#8BC34A",
+        "PowerGround" => "#F44336",
+        "Power" => "#F44336",
+        "Dielectric" => "#FFC107",
+        "Drill" => "#9C27B0",
+        "Rout" => "#795548",
+        "SolderMask" => "#2196F3",
+        "SolderPaste" => "#03A9F4",
+        "SilkScreen" => "#FFFFFF",
+        "Component" => "#607D8B",
+        "Document" => "#BDBDBD",
+        _ => "#808080",
+    };
 
     private static Component MapProtobufComponent(Odb.Lib.Protobuf.ProductModel.Component proto)
     {

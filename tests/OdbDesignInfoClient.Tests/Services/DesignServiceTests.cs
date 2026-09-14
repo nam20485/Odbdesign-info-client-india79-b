@@ -73,6 +73,23 @@ public class DesignServiceTests
         ]
         """;
 
+    /// <summary>
+    /// Sample design-matrix (stackup) JSON, mirroring the live server projection shape:
+    /// sparse optional fields (type absent = Signal, drill span, real color) per layer.
+    /// </summary>
+    private const string SampleMatrixJson = """
+        {
+          "steps": [{ "column": 1, "id": 19, "name": "STEP" }],
+          "layers": [
+            { "row": 1, "type": "Component", "name": "COMP_+_TOP", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } },
+            { "row": 2, "type": "SolderMask", "name": "SOLDERMASK-TOP", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } },
+            { "row": 3, "name": "LAYER-1", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } },
+            { "row": 4, "type": "Dielectric", "name": "DIELECTRIC1", "color": { "red": 99, "green": 99, "blue": 55, "noPreference": false } },
+            { "row": 5, "type": "Drill", "name": "DRILL", "startName": "LAYER-1", "endName": "LAYER-8", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } }
+          ]
+        }
+        """;
+
     public DesignServiceTests()
     {
         _mockConnectionService = new Mock<IConnectionService>();
@@ -434,9 +451,39 @@ public class DesignServiceTests
     }
 
     [Fact]
-    public async Task GetStackupAsync_ReturnsLayers_WhenServerReturnsLayerNames()
+    public async Task GetStackupAsync_ParsesMatrixLayers_WithAuthoritativeTypeColorAndStackOrder()
     {
         // Arrange
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleMatrixJson));
+
+        // Act
+        var result = await _sut.GetStackupAsync("design-1", "pcb");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(5, result.Count);
+        Assert.Equal("COMP_+_TOP", result[0].Name);
+        Assert.Equal("Component", result[0].Type);
+        // Absent "type" field means a Signal layer (server omits the default enum).
+        Assert.Equal("Signal", result[2].Type);
+        // Real server color when set; type-based default when "noPreference".
+        Assert.Equal("#636337", result[3].ColorHex);
+        Assert.Equal("#2196F3", result[1].ColorHex);
+        // Drill span carried through.
+        Assert.Equal("LAYER-1", result[4].StartLayer);
+        Assert.Equal("LAYER-8", result[4].EndLayer);
+        // Physical stack order preserved.
+        Assert.Equal(1, result[0].StackOrder);
+        Assert.Equal(5, result[4].StackOrder);
+    }
+
+    [Fact]
+    public async Task GetStackupAsync_FallsBackToLayerNames_WhenMatrixUnavailable()
+    {
+        // Arrange - the matrix route fails but the layer-name list is available
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
         var layerNamesJson = """["top_copper", "dielectric_1", "bottom_copper"]""";
         _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSuccessResponse(layerNamesJson));
@@ -444,16 +491,21 @@ public class DesignServiceTests
         // Act
         var result = await _sut.GetStackupAsync("design-1", "pcb");
 
-        // Assert
+        // Assert - minimal stackup still built from names, no fabricated thickness/material
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
         Assert.Equal("top_copper", result[0].Name);
+        Assert.Equal(1, result[0].StackOrder);
+        Assert.Null(result[0].Thickness);
+        Assert.Null(result[0].Material);
     }
 
     [Fact]
-    public async Task GetStackupAsync_ParsesEnvelopeFormat_WhenServerReturnsLayersObject()
+    public async Task GetStackupAsync_ParsesEnvelopeFormat_InLayerNameFallback()
     {
-        // Arrange - the server wraps the layer list in a "layers" envelope
+        // Arrange - the layer-name list arrives wrapped in a "layers" envelope
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
         var envelopeJson = """{"layers":["board-outline.doc","comp_+_top","dielectric1","layer-1","soldermask-top"]}""";
         _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "step", It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSuccessResponse(envelopeJson));
@@ -467,6 +519,7 @@ public class DesignServiceTests
         Assert.Equal("board-outline.doc", result[0].Name);
         Assert.Equal("soldermask-top", result[4].Name);
     }
+
 
     [Fact]
     public async Task GetDesignsAsync_ReturnsEmptyList_WhenServerReturnsNoContent()
@@ -529,9 +582,8 @@ public class DesignServiceTests
     public async Task GetStackupAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
     {
         // Arrange
-        var layerNamesJson = """["top_copper", "bottom_copper"]""";
-        _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateSuccessResponse(layerNamesJson));
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleMatrixJson));
 
         // Act
         _ = await _sut.GetStackupAsync("design-1", "pcb");
@@ -539,9 +591,10 @@ public class DesignServiceTests
 
         // Assert
         _mockRestApi.Verify(
-            x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()),
+            x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
 
     [Fact]
     public async Task ClearCache_ForcesRefetchOnNextCall()

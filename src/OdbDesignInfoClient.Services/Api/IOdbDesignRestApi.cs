@@ -33,6 +33,14 @@ public interface IOdbDesignRestApi
     Task<ApiResponse<string>> GetLayerNamesAsync(string name, string step, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets the design matrix (step columns + layer rows) for a design.
+    /// Provides authoritative stackup data: layer type, physical stack order,
+    /// display color, and drill-span boundaries.
+    /// </summary>
+    [Get("/filemodels/{name}/matrix/matrix")]
+    Task<ApiResponse<string>> GetMatrixAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the list of symbols for a design.
     /// </summary>
     [Get("/filemodels/{name}/symbols")]

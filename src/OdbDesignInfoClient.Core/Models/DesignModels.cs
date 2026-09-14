@@ -153,6 +153,13 @@ public record NetFeature
 /// <summary>
 /// Represents a layer in the PCB stackup.
 /// </summary>
+/// <remarks>
+/// Populated from the server's design-matrix projection, which is the authoritative
+/// source for layer <see cref="Type"/>, physical <see cref="StackOrder"/>, and display
+/// <see cref="ColorHex"/>. The server's matrix does not expose thickness, material, or
+/// polarity, so <see cref="Thickness"/> and <see cref="Material"/> remain unset and the
+/// UI renders them as unavailable rather than fabricating defaults.
+/// </remarks>
 public record Layer
 {
     /// <summary>
@@ -166,25 +173,47 @@ public record Layer
     public string Name { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the layer type (Signal, Power, Dielectric, Drill).
+    /// Gets or sets the layer type (Signal, Dielectric, Drill, SolderMask, SilkScreen, Component, Document, Rout, …).
     /// </summary>
     public string Type { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the layer polarity (Positive, Negative).
+    /// Gets or sets the layer polarity (Positive, Negative). Not exposed by the current server matrix.
     /// </summary>
     public string Polarity { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the layer thickness in mils or mm.
+    /// Gets or sets the layer thickness in mils or mm. Null when the server does not report a value.
     /// </summary>
-    public double Thickness { get; init; }
+    public double? Thickness { get; init; }
 
     /// <summary>
-    /// Gets or sets the material name (for dielectric layers).
+    /// Gets or sets the material name (for dielectric layers). Null when the server does not report a value.
     /// </summary>
-    public string Material { get; init; } = string.Empty;
+    public string? Material { get; init; }
+
+    /// <summary>
+    /// Gets or sets the 1-based physical stack order (matrix row), top to bottom.
+    /// </summary>
+    public int StackOrder { get; init; }
+
+    /// <summary>
+    /// Gets or sets the display color as a hex string (e.g. "#636337").
+    /// Empty when the design declares no preferred color for this layer.
+    /// </summary>
+    public string ColorHex { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the upper layer name of a drill span. Null for non-drill layers.
+    /// </summary>
+    public string? StartLayer { get; init; }
+
+    /// <summary>
+    /// Gets or sets the lower layer name of a drill span. Null for non-drill layers.
+    /// </summary>
+    public string? EndLayer { get; init; }
 }
+
 
 /// <summary>
 /// Represents a drill tool in an ODB++ design.

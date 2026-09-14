@@ -13,7 +13,9 @@ namespace OdbDesignInfoClient.Services.Api;
 /// - Linux: Secret Service API / gnome-keyring
 /// 
 /// Credentials can be provided via:
-/// 1. Environment Variables: ODB_AUTH_USERNAME and ODB_AUTH_PASSWORD (recommended for production)
+/// 1. Environment Variables: ODBDESIGN_REST_USERNAME and ODBDESIGN_REST_PASSWORD
+///    (convention shared with the other OdbDesign clients), with ODB_AUTH_USERNAME
+///    and ODB_AUTH_PASSWORD accepted as a legacy fallback
 /// 2. Programmatically via SetCredentials() method
 /// 3. User input at runtime
 /// </summary>
@@ -29,9 +31,11 @@ public class BasicAuthService : IAuthService
     /// </summary>
     public BasicAuthService()
     {
-        // Try to load from environment variables on startup
-        var envUsername = Environment.GetEnvironmentVariable("ODB_AUTH_USERNAME");
-        var envPassword = Environment.GetEnvironmentVariable("ODB_AUTH_PASSWORD");
+        // Try the shared ODBDESIGN_REST_* convention first, then the legacy ODB_AUTH_* names
+        var envUsername = Environment.GetEnvironmentVariable("ODBDESIGN_REST_USERNAME")
+            ?? Environment.GetEnvironmentVariable("ODB_AUTH_USERNAME");
+        var envPassword = Environment.GetEnvironmentVariable("ODBDESIGN_REST_PASSWORD")
+            ?? Environment.GetEnvironmentVariable("ODB_AUTH_PASSWORD");
         
         if (!string.IsNullOrEmpty(envUsername) && !string.IsNullOrEmpty(envPassword))
         {

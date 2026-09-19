@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Data.Core.Plugins;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -100,9 +99,6 @@ public partial class App : Application
         {
             // Store command line arguments
             CommandLineArgs = desktop.Args ?? [];
-
-            // Avoid duplicate validations from both Avalonia and CommunityToolkit.
-            BindingPlugins.DataValidators.RemoveAt(0);
 
             var mainViewModel = Services.GetRequiredService<MainViewModel>();
             desktop.MainWindow = new MainWindow

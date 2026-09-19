@@ -93,12 +93,13 @@ public class ProductModelReader
         var scale = UnitsHelper.UnitsToMmScale(topComponents?.Units ?? bottomComponents?.Units);
 
         // Components + nets come from the shared builder (joins toeprints → nets).
-        // Enumerate via ByName, not ByKey: some designs ship a degenerate
-        // ComponentRecord.Id (0 for every record), which collapses the (side, Id)
-        // key to one entry per side. RefDes names are unique per component, so the
-        // name index is the reliable full list.
+        // ByKey is the complete component list: it keys every record on
+        // (side, per-side ordinal) — the canonical component identity that the
+        // eda_data netlist joins on — so it holds exactly one entry per placed
+        // component, in stable side/ordinal order. refDes (ByName) is unique too,
+        // but keys display names.
         var index = _builder.Build(topComponents, bottomComponents, edaData);
-        var components = index.ByName.Values.ToList();
+        var components = index.ByKey.Values.ToList();
 
 
         var packages = BuildPackages(edaData, scale);

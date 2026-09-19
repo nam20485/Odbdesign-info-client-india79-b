@@ -9,13 +9,22 @@ namespace OdbDesign.ProductModel;
 /// design's <c>FileModel</c> — no additional server round trips.
 ///
 /// Join notes (verified against the ODB++ structures the server ships):
+/// - Canonical component identity: refDes (<c>CompName</c>) plus the record's
+///   0-based per-side ordinal within <c>comp_+_top</c>/<c>comp_+_bot</c>
+///   (proto <c>ComponentRecord.index</c>). <c>ComponentRecord.id</c> is never
+///   populated by the server (always 0) and is NOT a join key.
 /// - <c>ComponentRecord.PkgRef</c> is a list index into <c>EdaDataFile.PackageRecords</c>.
 /// - Component pin → net: <c>ToeprintRecord.NetNumber</c> resolves against
 ///   <c>NetRecord.Index</c>, falling back to the record's ordinal position.
-/// - Net → component: TOEPRINT <c>SubnetRecord.ComponentNumber</c> resolves against
-///   <c>ComponentRecord.Id</c>, falling back to its list index, within the subnet's
-///   board side (side-blind fallback when the side field is unset); the subnet's
-///   <c>ToeprintNumber</c> indexes the component's toeprint records for the pin number.
+/// - Net → component: TOEPRINT <c>SubnetRecord.ComponentNumber</c> equals the
+///   component's per-side ordinal, so it resolves against the record's list
+///   position within the subnet's board side (side-blind fallback when the side
+///   field is unset); the subnet's <c>ToeprintNumber</c> indexes the component's
+///   toeprint records for the pin number. <c>ComponentRecord.Id</c> is
+///   deliberately never consulted — see <see cref="ResolveComponent"/>.
+/// - Per-component bookkeeping (<c>byKey</c>, net summaries, pin counts) keys on
+///   (side, per-side ordinal) — the canonical netlist foreign key. Keying on
+///   <c>Comp.Id</c> would merge every component on a side into one entry.
 /// - BOM: the component's BOM/CPN attribute value keys into
 ///   <c>bomDescriptionRecordsByCpn</c>.
 /// Every join degrades to null/empty when the data does not line up; the caller simply
@@ -52,39 +61,39 @@ public class ComponentDetailBuilder
             return ComponentDetailIndex.Empty;
         }
 
-        // (side, componentNumber) → component record, resolving Id first then
-        // list index. Component numbers are per-side data (each board side has
-        // its own components file), so the lookup keys include the side: with
-        // both sides merged, an Id present on top and bottom would look
-        // ambiguous and the join would degrade for every two-sided board. The
-        // side-blind (number-only) views exist for servers that omit the
-        // subnet side field — an unset proto3 optional reads as BsNone.
-        var byId = new Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side)>>();
-        var byIndex = new Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side)>>();
-        var byIdAnySide = new Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side)>>();
-        var byIndexAnySide = new Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side)>>();
-        AddComponentLookups(topComponents, BoardSide.Top, byId, byIndex, byIdAnySide, byIndexAnySide);
-        AddComponentLookups(bottomComponents, BoardSide.Bottom, byId, byIndex, byIdAnySide, byIndexAnySide);
+        // (side, per-side ordinal) → component record. The ordinal is the
+        // canonical netlist foreign key: eda_data subnets reference components by
+        // ComponentNumber == the record's list position on the subnet's board
+        // side. Component numbers are per-side data (each board side has its own
+        // components file), so the lookup keys include the side; the side-blind
+        // (number-only) view exists for servers that omit the subnet side field —
+        // an unset proto3 optional reads as BsNone. Proto ComponentRecord.id is
+        // never populated (always 0) and is not a join key.
+        var byIndex = new Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side, uint Index)>>();
+        var byIndexAnySide = new Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side, uint Index)>>();
+        AddComponentLookups(topComponents, BoardSide.Top, byIndex, byIndexAnySide);
+        AddComponentLookups(bottomComponents, BoardSide.Bottom, byIndex, byIndexAnySide);
 
         var scale = UnitsHelper.UnitsToMmScale(topComponents?.Units ?? bottomComponents?.Units);
 
         // One pass over the nets builds both the net details (net tab) and the
         // per-component net summaries (component tab), keeping pin counts exact.
+        // Keys carry the per-side ordinal (the netlist FK), never Comp.Id.
         var netDetails = new List<NetDetail>(edaData.NetRecords.Count);
-        var netsByComponent = new Dictionary<(BoardSide Side, uint Id), List<NetSummary>>();
+        var netsByComponent = new Dictionary<(BoardSide Side, uint Index), List<NetSummary>>();
         // Dedupe and pin counts key on the net record's list ordinal — the only
         // stable net identity. Raw names collide across distinct unnamed nets
         // (""), and display names ("#Index"-style fallbacks) never equal the raw
         // name they would be deduped against, so name-keyed bookkeeping either
         // merges distinct nets or never dedupes at all.
-        var pinCounts = new Dictionary<(int Net, BoardSide Side, uint Id), int>();
-        var summarized = new HashSet<(BoardSide Side, uint Id, int Net)>();
+        var pinCounts = new Dictionary<(int Net, BoardSide Side, uint Index), int>();
+        var summarized = new HashSet<(BoardSide Side, uint Index, int Net)>();
 
         for (var netOrdinal = 0; netOrdinal < edaData.NetRecords.Count; netOrdinal++)
         {
             var net = edaData.NetRecords[netOrdinal];
             var connections = new List<NetConnection>();
-            var connectedKeys = new List<(BoardSide Side, uint Id)>();
+            var connectedKeys = new List<(BoardSide Side, uint Index)>();
 
             foreach (var subnet in net.SubnetRecords)
             {
@@ -93,7 +102,7 @@ public class ComponentDetailBuilder
                     continue;
                 }
 
-                var comp = ResolveComponent(subnet.ComponentNumber, subnet.Side, byId, byIndex, byIdAnySide, byIndexAnySide);
+                var comp = ResolveComponent(subnet.ComponentNumber, subnet.Side, byIndex, byIndexAnySide);
                 if (comp == null)
                 {
                     // Unresolvable reference: keep the raw number so the net tab can
@@ -105,14 +114,14 @@ public class ComponentDetailBuilder
                     continue;
                 }
 
-                var key = (Side: comp.Value.Side, Id: comp.Value.Comp.Id);
+                var key = (Side: comp.Value.Side, Index: comp.Value.Index);
                 connections.Add(new NetConnection(
                     ComponentName(comp.Value.Comp),
                     ResolvePinNumber(subnet.ToeprintNumber, comp.Value.Comp),
                     subnet.Side));
                 connectedKeys.Add(key);
 
-                var pinKey = (netOrdinal, key.Side, key.Id);
+                var pinKey = (netOrdinal, key.Side, key.Index);
                 pinCounts[pinKey] = pinCounts.TryGetValue(pinKey, out var count) ? count + 1 : 1;
             }
 
@@ -133,18 +142,20 @@ public class ComponentDetailBuilder
 
                 // One summary row per (component, net) pair — the component can
                 // touch the same net through many toeprints.
-                if (summarized.Add((key.Side, key.Id, netOrdinal)))
+                if (summarized.Add((key.Side, key.Index, netOrdinal)))
                 {
                     list.Add(new NetSummary(
                         string.IsNullOrEmpty(net.Name) ? $"#{net.Index}" : net.Name,
                         net.Index,
-                        pinCounts.TryGetValue((netOrdinal, key.Side, key.Id), out var pins) ? pins : 0));
+                        pinCounts.TryGetValue((netOrdinal, key.Side, key.Index), out var pins) ? pins : 0));
                 }
             }
         }
 
-        var byKey = new Dictionary<(BoardSide, uint), ComponentDetail>();
-        var byName = new Dictionary<string, ComponentDetail>(StringComparer.OrdinalIgnoreCase);
+        // Keyed on (side, per-side ordinal) — the canonical component identity
+        // used by the netlist join, so one entry per component record.
+        var byKey = new Dictionary<(BoardSide Side, uint Index), ComponentDetail>();
+        var byName = new Dictionary<string, ComponentDetail>(StringComparer.Ordinal);
         BuildSide(topComponents, BoardSide.Top, edaData, scale, netsByComponent, byKey, byName);
         BuildSide(bottomComponents, BoardSide.Bottom, edaData, scale, netsByComponent, byKey, byName);
 
@@ -161,8 +172,8 @@ public class ComponentDetailBuilder
         BoardSide side,
         EdaDataFile edaData,
         double scale,
-        Dictionary<(BoardSide Side, uint Id), List<NetSummary>> netsByComponent,
-        Dictionary<(BoardSide, uint), ComponentDetail> byKey,
+        Dictionary<(BoardSide Side, uint Index), List<NetSummary>> netsByComponent,
+        Dictionary<(BoardSide Side, uint Index), ComponentDetail> byKey,
         Dictionary<string, ComponentDetail> byName)
     {
         if (components == null)
@@ -172,11 +183,14 @@ public class ComponentDetailBuilder
 
         var netNamesByNumber = BuildNetNameLookup(edaData);
 
-        foreach (var comp in components.ComponentRecords)
+        for (var i = 0; i < components.ComponentRecords.Count; i++)
         {
+            var comp = components.ComponentRecords[i];
             var package = ResolvePackage(comp, edaData, scale, out var pkgName);
             var pins = BuildPins(comp, netNamesByNumber, scale);
-            netsByComponent.TryGetValue((side, comp.Id), out var nets);
+            // The list position (per-side ordinal) is the canonical netlist FK;
+            // Comp.Id is never populated and must not key per-component data.
+            netsByComponent.TryGetValue((side, (uint)i), out var nets);
 
             // Component height is a 3D-rendering concern resolved from BOM/footprint
             // attributes; data viewers do not surface it, so it is reported as
@@ -204,7 +218,7 @@ public class ComponentDetailBuilder
                 pins,
                 (IReadOnlyList<NetSummary>?)nets ?? Array.Empty<NetSummary>());
 
-            byKey[(side, comp.Id)] = detail;
+            byKey[(side, (uint)i)] = detail;
             byName[name] = detail;
         }
     }
@@ -343,10 +357,8 @@ public class ComponentDetailBuilder
     private static void AddComponentLookups(
         ComponentsFile? components,
         BoardSide side,
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byId,
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byIndex,
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byIdAnySide,
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byIndexAnySide)
+        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndex,
+        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndexAnySide)
     {
         if (components == null)
         {
@@ -356,83 +368,79 @@ public class ComponentDetailBuilder
         for (var i = 0; i < components.ComponentRecords.Count; i++)
         {
             var comp = components.ComponentRecords[i];
-            AddLookup(byId, (side, comp.Id), comp, side);
-            AddLookup(byIndex, (side, (uint)i), comp, side);
-            AddLookupAnySide(byIdAnySide, comp.Id, comp, side);
-            AddLookupAnySide(byIndexAnySide, (uint)i, comp, side);
+            AddLookup(byIndex, (side, (uint)i), comp, side, (uint)i);
+            AddLookupAnySide(byIndexAnySide, (uint)i, comp, side, (uint)i);
         }
     }
 
     private static void AddLookup(
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> map,
+        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> map,
         (BoardSide Side, uint Number) key,
         ComponentsFile.Types.ComponentRecord comp,
-        BoardSide side)
+        BoardSide side,
+        uint index)
     {
         if (!map.TryGetValue(key, out var list))
         {
-            list = new List<(ComponentsFile.Types.ComponentRecord, BoardSide)>();
+            list = new List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>();
             map[key] = list;
         }
 
-        list.Add((comp, side));
+        list.Add((comp, side, index));
     }
 
     private static void AddLookupAnySide(
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> map,
+        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> map,
         uint key,
         ComponentsFile.Types.ComponentRecord comp,
-        BoardSide side)
+        BoardSide side,
+        uint index)
     {
         if (!map.TryGetValue(key, out var list))
         {
-            list = new List<(ComponentsFile.Types.ComponentRecord, BoardSide)>();
+            list = new List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>();
             map[key] = list;
         }
 
-        list.Add((comp, side));
+        list.Add((comp, side, index));
     }
 
     /// <summary>
     /// Resolves an EDA-data component number to a component record on the subnet's
-    /// board side (component numbers are per-side), Id first then list index. A
-    /// reference resolves to nothing only when both the Id and ordinal lookups
-    /// fail or are ambiguous — the Id lookup falling through to a unique ordinal
-    /// match is intended, since guessing beyond that would silently mislabel the
-    /// net tab's connections. A subnet whose side field is unset (proto3 optional
-    /// reads as <see cref="BoardSide.BsNone"/>, e.g. a server predating the field)
-    /// falls back to the side-blind number-only view, resolving only when unique
+    /// board side (component numbers are per-side) by list index (ordinal). A
+    /// reference resolves to nothing when the ordinal lookup fails or is
+    /// ambiguous — guessing beyond a unique match would silently mislabel the
+    /// results. A subnet whose side field is unset (proto3 optional reads as
+    /// <see cref="BoardSide.BsNone"/>, e.g. a server predating the field) falls
+    /// back to the side-blind number-only view, resolving only when unique
     /// across both sides.
     /// </summary>
-    private static (ComponentsFile.Types.ComponentRecord Comp, BoardSide Side)? ResolveComponent(
+    /// <remarks>
+    /// The returned ordinal is the canonical per-component key for all
+    /// downstream bookkeeping: canonical component identity is refDes plus the
+    /// per-side ordinal (proto <c>ComponentRecord.index</c>). Component
+    /// <c>Id</c> is deliberately not consulted: the server never populates it
+    /// today (it is always 0 and not a join key), and once it ships ODB++ UIDs,
+    /// matching a per-side ordinal against a product-model-wide UID silently
+    /// mis-resolves (~10% on panelized designs). refDes is the external key;
+    /// this ordinal join is server-owned semantics the client must not
+    /// re-implement and goes away when server Connectivity ships.
+    /// </remarks>
+    private static (ComponentsFile.Types.ComponentRecord Comp, BoardSide Side, uint Index)? ResolveComponent(
         uint componentNumber,
         BoardSide side,
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byId,
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byIndex,
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byIdAnySide,
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide)>> byIndexAnySide)
+        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndex,
+        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndexAnySide)
     {
-        if (byId.TryGetValue((side, componentNumber), out var byIdList) && byIdList.Count == 1)
-        {
-            return byIdList[0];
-        }
-
         if (byIndex.TryGetValue((side, componentNumber), out var byIndexList) && byIndexList.Count == 1)
         {
             return byIndexList[0];
         }
 
-        if (side == BoardSide.BsNone)
+        if (side == BoardSide.BsNone
+            && byIndexAnySide.TryGetValue(componentNumber, out var anyIndexList) && anyIndexList.Count == 1)
         {
-            if (byIdAnySide.TryGetValue(componentNumber, out var anyIdList) && anyIdList.Count == 1)
-            {
-                return anyIdList[0];
-            }
-
-            if (byIndexAnySide.TryGetValue(componentNumber, out var anyIndexList) && anyIndexList.Count == 1)
-            {
-                return anyIndexList[0];
-            }
+            return anyIndexList[0];
         }
 
         return null;

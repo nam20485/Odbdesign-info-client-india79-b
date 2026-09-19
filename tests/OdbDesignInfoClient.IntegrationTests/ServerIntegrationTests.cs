@@ -1,4 +1,7 @@
 using System.Net;
+using Microsoft.Extensions.Logging.Abstractions;
+using Odb.Grpc;
+using OdbDesign.ProductModel;
 using OdbDesignInfoClient.Core.Models;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Services;
@@ -17,6 +20,10 @@ namespace OdbDesignInfoClient.IntegrationTests;
 /// ODBDESIGN_REST_PASSWORD (or the legacy ODB_AUTH_* names) and the server is
 /// reachable; otherwise each test returns early and reports why.
 /// Override the target with ODBDESIGN_REST_URL (default: the standard deployment).
+/// The design under test is ODBDESIGN_TEST_DESIGN (default: sample_design) and the
+/// step is ODBDESIGN_TEST_STEP (default: step). ONLY public-domain designs may be
+/// referenced here: sample_design and designodb_rigidflex — proprietary designs
+/// (e.g. ap50132476, Turbot, Panel-*) must never appear in tests.
 /// Docker/TestContainers-based contract tests remain a planned addition.
 /// </summary>
 public class ServerIntegrationTests
@@ -27,12 +34,17 @@ public class ServerIntegrationTests
     private readonly ITestOutputHelper _output;
     private readonly string _baseUrl;
     private readonly string _grpcUrl;
+    private readonly string _designName;
+    private readonly string _stepName;
 
     public ServerIntegrationTests(ITestOutputHelper output)
     {
         _output = output;
         _baseUrl = Environment.GetEnvironmentVariable("ODBDESIGN_REST_URL") ?? DefaultBaseUrl;
         _grpcUrl = Environment.GetEnvironmentVariable("ODBDESIGN_GRPC_URL") ?? DefaultGrpcUrl;
+        // Only public-domain designs (sample_design, designodb_rigidflex) may be used.
+        _designName = Environment.GetEnvironmentVariable("ODBDESIGN_TEST_DESIGN") ?? "sample_design";
+        _stepName = Environment.GetEnvironmentVariable("ODBDESIGN_TEST_STEP") ?? "step";
     }
 
     private bool TryCreateClient(out DesignService designService, out string skipReason, bool withCredentials = true)
@@ -103,7 +115,7 @@ public class ServerIntegrationTests
         }
 
         var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
+        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
         var components = await sut.GetComponentsAsync(design!.Id, design.Steps[0]);
@@ -124,7 +136,7 @@ public class ServerIntegrationTests
         }
 
         var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
+        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
         // The server's /matrix/matrix projection gives real layer types, stack order, and
@@ -168,7 +180,7 @@ public class ServerIntegrationTests
         }
 
         var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
+        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
         var nets = await sut.GetNetsAsync(design!.Id, design.Steps[0]);
@@ -190,7 +202,7 @@ public class ServerIntegrationTests
         // Without credentials the server returns 401, which the service
         // must translate into a clear UnauthorizedAccessException
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => sut.GetComponentsAsync("sample_design", "step"));
+            () => sut.GetComponentsAsync(_designName, _stepName));
 
         _output.WriteLine($"Received expected auth error: {ex.Message}");
     }
@@ -198,7 +210,7 @@ public class ServerIntegrationTests
     [Fact]
     public async Task Live_GrpcProductModel_PopulatesComponentsPackagesPartsAndDrills()
     {
-        var (sut, skip) = await TryCreateGrpcClientAsync();
+        var (sut, connection, skip) = await TryCreateGrpcClientAsync();
         if (sut is null)
         {
             _output.WriteLine($"SKIPPED: {skip}");
@@ -207,39 +219,74 @@ public class ServerIntegrationTests
 
         // One gRPC GetDesign (normalized lists pruned) → the shared ProductModelReader
         // reconstructs components/nets/pins/packages/parts/drill from the FileModel.
-        var comps = await sut.GetComponentsAsync("sample_design", "step");
-        var pkgs = await sut.GetPackagesAsync("sample_design", "step");
-        var parts = await sut.GetPartsAsync("sample_design", "step");
-        var drills = await sut.GetDrillToolsAsync("sample_design", "step");
+        var comps = await sut.GetComponentsAsync(_designName, _stepName);
+        var pkgs = await sut.GetPackagesAsync(_designName, _stepName);
+        var parts = await sut.GetPartsAsync(_designName, _stepName);
+        var drills = await sut.GetDrillToolsAsync(_designName, _stepName);
 
         _output.WriteLine(
             $"gRPC product model: components={comps.Count} packages={pkgs.Count} parts={parts.Count} drills={drills.Count}");
 
-        Assert.True(comps.Count > 100, $"expected the full component list, got {comps.Count}");
+        // sample_design reference numbers (thresholds, not exact): ~813 components,
+        // ~644 nets, ~71 packages, ~143 parts, ~17 drill tools.
+        Assert.True(comps.Count > 700, $"expected the full component list (~813), got {comps.Count}");
         // Real placement comes from the FileModel (the REST projection has X/Y = 0).
         Assert.Contains(comps, c => c.X != 0 || c.Y != 0);
         Assert.Contains(comps, c => c.Pins.Count > 0);
-        Assert.NotEmpty(pkgs);
-        Assert.NotEmpty(parts);
+        Assert.True(pkgs.Count > 50, $"expected ~71 packages, got {pkgs.Count}");
+        Assert.True(parts.Count > 100, $"expected ~143 parts, got {parts.Count}");
         Assert.Contains(parts, p => p.UsageCount > 0);
-        Assert.NotEmpty(drills);
+        Assert.True(drills.Count > 10, $"expected ~17 drill tools, got {drills.Count}");
 
         var sample = comps.First(c => c.Pins.Count > 0);
         _output.WriteLine(
             $"sample component {sample.RefDes}: part={sample.PartName} pkg={sample.Package} " +
             $"x={sample.X:F3} y={sample.Y:F3} rot={sample.Rotation} pins={sample.Pins.Count}");
+
+        // Prove the (side, per-side ordinal) re-key against the live server: run
+        // the shared reader on the raw file-archive Design — the exact object
+        // DesignService reads — and check per-component net summaries are sane.
+        // With the old (side, Comp.Id = 0) keying, every component on a side
+        // merged into one entry and a 1-pin component reported ~610 of the 644
+        // nets as its own summary list. sample_design's true maximum is ~170
+        // nets (U22, a 208-pin part); genuine connectivity never exceeds the
+        // component's own pin count.
+        var grpcClient = connection!.GrpcClient;
+        Assert.NotNull(grpcClient);
+        var design = await grpcClient!.GetDesignAsync(new GetDesignRequest { DesignName = _designName });
+        var model = new ProductModelReader(NullLogger<ProductModelReader>.Instance).Read(design, _stepName);
+
+        var maxNetsPerComponent = model.Components.Count == 0 ? 0 : model.Components.Max(c => c.Nets.Count);
+        var lowPinMinNets = model.Components.Where(c => c.Pins.Count <= 2).Select(c => c.Nets.Count).DefaultIfEmpty(0).Min();
+        _output.WriteLine(
+            $"reader join: components={model.Components.Count} nets={model.Nets.Count} " +
+            $"maxNetsPerComponent={maxNetsPerComponent} lowPinMinNets={lowPinMinNets}");
+
+        Assert.Equal(comps.Count, model.Components.Count);
+        Assert.True(model.Nets.Count > 600, $"expected ~644 nets, got {model.Nets.Count}");
+        Assert.True(
+            maxNetsPerComponent < model.Nets.Count / 2,
+            $"per-component nets merged again: max {maxNetsPerComponent} of {model.Nets.Count} nets");
+        // A merged entry reported far more nets than its pin count; genuine
+        // connectivity cannot (each distinct net needs at least one pin).
+        Assert.All(
+            model.Components,
+            c => Assert.True(c.Nets.Count <= c.Pins.Count, $"{c.Name}: {c.Nets.Count} nets > {c.Pins.Count} pins"));
+        Assert.True(
+            model.Components.Any(c => c.Pins.Count <= 2 && c.Nets.Count <= 2),
+            "expected at least one low-pin component with a small net summary list");
     }
 
     /// <summary>
     /// Builds a DesignService backed by a real gRPC connection (REST health check + gRPC
     /// channel), or returns a skip reason when credentials/gRPC are unavailable.
     /// </summary>
-    private async Task<(DesignService? Service, string Skip)> TryCreateGrpcClientAsync()
+    private async Task<(DesignService? Service, ConnectionService? Connection, string Skip)> TryCreateGrpcClientAsync()
     {
         var auth = new BasicAuthService();
         if (!auth.IsAuthenticated)
         {
-            return (null, "No credentials found (set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD).");
+            return (null, null, "No credentials found (set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD).");
         }
 
         var handler = new AuthHeaderHandler(auth) { InnerHandler = new SocketsHttpHandler() };
@@ -262,10 +309,10 @@ public class ServerIntegrationTests
         var connected = await connection.ConnectAsync(config);
         if (!connected || !connection.IsGrpcAvailable)
         {
-            return (null, $"gRPC unavailable (connected={connected}, grpc={connection.IsGrpcAvailable}) at {_grpcUrl}");
+            return (null, null, $"gRPC unavailable (connected={connected}, grpc={connection.IsGrpcAvailable}) at {_grpcUrl}");
         }
 
-        return (new DesignService(connection, restApi), string.Empty);
+        return (new DesignService(connection, restApi), connection, string.Empty);
     }
 
     /// <summary>

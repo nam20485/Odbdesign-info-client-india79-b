@@ -7,20 +7,56 @@
              x:Class="OdbDesignInfoClient.Views.NetsTabView"
              x:DataType="vm:NetsTabViewModel">
 
+    <UserControl.Resources>
+        <!-- Net (parent) row cells -->
+        <DataTemplate x:Key="NetNameCell" x:DataType="vm:NetRowViewModel">
+            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="NetPinCountCell" x:DataType="vm:NetRowViewModel">
+            <TextBlock Text="{Binding PinCount}" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="NetViaCountCell" x:DataType="vm:NetRowViewModel">
+            <TextBlock Text="{Binding ViaCount}" VerticalAlignment="Center"/>
+        </DataTemplate>
+
+        <!-- Feature (child) row cells -->
+        <DataTemplate x:Key="FeatureIdCell" x:DataType="vm:NetFeatureRowViewModel">
+            <TextBlock Text="{Binding Id}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0.75"/>
+        </DataTemplate>
+        <DataTemplate x:Key="FeatureTypeCell" x:DataType="vm:NetFeatureRowViewModel">
+            <TextBlock Text="{Binding FeatureType}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0.75"/>
+        </DataTemplate>
+        <DataTemplate x:Key="FeatureComponentCell" x:DataType="vm:NetFeatureRowViewModel">
+            <!-- Clickable component RefDes: deep-links to the Components tab via NavigateToComponentCommand -->
+            <Button Command="{Binding NavigateToComponentCommand}"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="2,0"
+                    Cursor="Hand"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center">
+                <TextBlock Text="{Binding ComponentRef}"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="#FF0067C0"
+                           TextDecorations="Underline"/>
+            </Button>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <Grid RowDefinitions="Auto,Auto,*,Auto">
         <!-- Filter Bar -->
         <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <Grid ColumnDefinitions="Auto,*,Auto">
-                <TextBlock Grid.Column="0" 
-                           Text="Filter:" 
-                           VerticalAlignment="Center" 
+                <TextBlock Grid.Column="0"
+                           Text="Filter:"
+                           VerticalAlignment="Center"
                            Margin="0,0,8,0"/>
-                <TextBox Grid.Column="1" 
+                <TextBox Grid.Column="1"
                          Text="{Binding FilterText}"
                          PlaceholderText="Search by Net Name..."
                          MinWidth="300"/>
-                <Button Grid.Column="2" 
-                        Content="Refresh" 
+                <Button Grid.Column="2"
+                        Content="Refresh"
                         Command="{Binding RefreshCommand}"
                         Margin="8,0,0,0"/>
             </Grid>
@@ -40,34 +76,36 @@
 
 
         <!-- Loading Overlay -->
-        <Border Grid.Row="2" 
+        <Border Grid.Row="2"
                 IsVisible="{Binding IsLoading}"
                 Background="#80000000"
                 ZIndex="100">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                 <ProgressBar IsIndeterminate="True" Width="200"/>
-                <TextBlock Text="Loading nets..." 
+                <TextBlock Text="Loading nets..."
                            Foreground="White"
                            HorizontalAlignment="Center"
                            Margin="0,8,0,0"/>
             </StackPanel>
         </Border>
 
-        <!-- Data Grid -->
-        <DataGrid Grid.Row="2"
-                  ItemsSource="{Binding Nets}"
-                  SelectedItem="{Binding SelectedNet}"
-                  CanUserResizeColumns="True"
-                  CanUserSortColumns="True"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  GridLinesVisibility="Horizontal">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Net Name" Binding="{Binding Name}" Width="*"/>
-                <DataGridTextColumn Header="Pin Count" Binding="{Binding PinCount}" Width="100"/>
-                <DataGridTextColumn Header="Via Count" Binding="{Binding ViaCount}" Width="100"/>
-            </DataGrid.Columns>
-        </DataGrid>
+        <!-- Hierarchical Tree Grid: Net -> Features (cell templates assigned in code-behind) -->
+        <TreeDataGrid Grid.Row="2"
+                      x:Name="NetGrid"
+                      ItemsSource="{Binding Nets}"
+                      CanUserResizeColumns="True"
+                      CanUserSortColumns="True"
+                      SelectionMode="Row"
+                      SelectionChanged="OnTreeSelectionChanged">
+            <TreeDataGridHierarchicalExpanderColumn Header="Net Name"
+                                                    Width="*"
+                                                    ChildrenBinding="{Binding Features, DataType={x:Type vm:NetRowViewModel}}"
+                                                    IsExpandedBinding="{Binding IsExpanded, DataType={x:Type vm:NetRowViewModel}}">
+                <TreeDataGridTemplateColumn/>
+            </TreeDataGridHierarchicalExpanderColumn>
+            <TreeDataGridTemplateColumn Header="Pin Count" Width="100"/>
+            <TreeDataGridTemplateColumn Header="Via Count" Width="100"/>
+        </TreeDataGrid>
 
         <!-- Status Bar -->
         <Border Grid.Row="3" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">

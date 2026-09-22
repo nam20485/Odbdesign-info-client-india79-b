@@ -7,20 +7,68 @@
              x:Class="OdbDesignInfoClient.Views.ComponentsTabView"
              x:DataType="vm:ComponentsTabViewModel">
 
+    <UserControl.Resources>
+        <!-- Component (parent) row cells -->
+        <DataTemplate x:Key="ComponentRefDesCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding RefDes}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="ComponentPartNameCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding PartName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="ComponentPackageCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding Package}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="ComponentSideCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding Side}" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="ComponentRotationCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding Rotation, StringFormat={}{0:F1}}" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="ComponentXCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding X, StringFormat={}{0:F3}}" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="ComponentYCell" x:DataType="vm:ComponentRowViewModel">
+            <TextBlock Text="{Binding Y, StringFormat={}{0:F3}}" VerticalAlignment="Center"/>
+        </DataTemplate>
+
+        <!-- Pin (child) row cells -->
+        <DataTemplate x:Key="PinRefDesCell" x:DataType="vm:PinRowViewModel">
+            <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0.75"/>
+        </DataTemplate>
+        <DataTemplate x:Key="PinNetCell" x:DataType="vm:PinRowViewModel">
+            <!-- Clickable net name: deep-links to the Nets tab via NavigateToNetCommand -->
+            <Button Command="{Binding NavigateToNetCommand}"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="2,0"
+                    Cursor="Hand"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center">
+                <TextBlock Text="{Binding NetName}"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="#FF0067C0"
+                           TextDecorations="Underline"/>
+            </Button>
+        </DataTemplate>
+        <DataTemplate x:Key="PinElectricalTypeCell" x:DataType="vm:PinRowViewModel">
+            <TextBlock Text="{Binding ElectricalType}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Opacity="0.75"/>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <Grid RowDefinitions="Auto,Auto,*,Auto">
         <!-- Filter Bar -->
         <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <Grid ColumnDefinitions="Auto,*,Auto">
-                <TextBlock Grid.Column="0" 
-                           Text="Filter:" 
-                           VerticalAlignment="Center" 
+                <TextBlock Grid.Column="0"
+                           Text="Filter:"
+                           VerticalAlignment="Center"
                            Margin="0,0,8,0"/>
-                <TextBox Grid.Column="1" 
+                <TextBox Grid.Column="1"
                          Text="{Binding FilterText}"
                          PlaceholderText="Search by RefDes, Part Name, or Package..."
                          MinWidth="300"/>
-                <Button Grid.Column="2" 
-                        Content="Refresh" 
+                <Button Grid.Column="2"
+                        Content="Refresh"
                         Command="{Binding RefreshCommand}"
                         Margin="8,0,0,0"/>
             </Grid>
@@ -40,38 +88,40 @@
 
 
         <!-- Loading Overlay -->
-        <Border Grid.Row="2" 
+        <Border Grid.Row="2"
                 IsVisible="{Binding IsLoading}"
                 Background="#80000000"
                 ZIndex="100">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                 <ProgressBar IsIndeterminate="True" Width="200"/>
-                <TextBlock Text="Loading components..." 
+                <TextBlock Text="Loading components..."
                            Foreground="White"
                            HorizontalAlignment="Center"
                            Margin="0,8,0,0"/>
             </StackPanel>
         </Border>
 
-        <!-- Data Grid -->
-        <DataGrid Grid.Row="2"
-                  ItemsSource="{Binding Components}"
-                  SelectedItem="{Binding SelectedComponent}"
-                  CanUserResizeColumns="True"
-                  CanUserSortColumns="True"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  GridLinesVisibility="Horizontal">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="RefDes" Binding="{Binding RefDes}" Width="100"/>
-                <DataGridTextColumn Header="Part Name" Binding="{Binding PartName}" Width="150"/>
-                <DataGridTextColumn Header="Package" Binding="{Binding Package}" Width="120"/>
-                <DataGridTextColumn Header="Side" Binding="{Binding Side}" Width="60"/>
-                <DataGridTextColumn Header="Rotation" Binding="{Binding Rotation, StringFormat={}{0:F1}}" Width="80"/>
-                <DataGridTextColumn Header="X" Binding="{Binding X, StringFormat={}{0:F3}}" Width="80"/>
-                <DataGridTextColumn Header="Y" Binding="{Binding Y, StringFormat={}{0:F3}}" Width="80"/>
-            </DataGrid.Columns>
-        </DataGrid>
+        <!-- Hierarchical Tree Grid: Component -> Pins (cell templates assigned in code-behind) -->
+        <TreeDataGrid Grid.Row="2"
+                      x:Name="ComponentGrid"
+                      ItemsSource="{Binding Components}"
+                      CanUserResizeColumns="True"
+                      CanUserSortColumns="True"
+                      SelectionMode="Row"
+                      SelectionChanged="OnTreeSelectionChanged">
+            <TreeDataGridHierarchicalExpanderColumn Header="RefDes"
+                                                    Width="110"
+                                                    ChildrenBinding="{Binding Pins, DataType={x:Type vm:ComponentRowViewModel}}"
+                                                    IsExpandedBinding="{Binding IsExpanded, DataType={x:Type vm:ComponentRowViewModel}}">
+                <TreeDataGridTemplateColumn/>
+            </TreeDataGridHierarchicalExpanderColumn>
+            <TreeDataGridTemplateColumn Header="Part Name" Width="150"/>
+            <TreeDataGridTemplateColumn Header="Package" Width="120"/>
+            <TreeDataGridTemplateColumn Header="Side" Width="60"/>
+            <TreeDataGridTemplateColumn Header="Rotation" Width="80"/>
+            <TreeDataGridTemplateColumn Header="X" Width="90"/>
+            <TreeDataGridTemplateColumn Header="Y" Width="90"/>
+        </TreeDataGrid>
 
         <!-- Status Bar -->
         <Border Grid.Row="3" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">

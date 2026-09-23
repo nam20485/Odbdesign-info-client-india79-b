@@ -105,8 +105,42 @@ public class ProductModelReader
         var packages = BuildPackages(edaData, scale);
         var parts = BuildParts(components);
         var drillTools = BuildDrillTools(stepDir);
+        var nets = ApplyViaCounts(index.Nets, edaData);
 
-        return new DesignProductModel(components, index.Nets, packages, parts, drillTools);
+        return new DesignProductModel(components, nets, packages, parts, drillTools);
+    }
+
+    /// <summary>
+    /// Projects per-net VIA subnet counts onto the builder's net details. The builder's
+    /// existing toeprint join is untouched: this additive pass walks the same
+    /// <see cref="EdaDataFile.NetRecords"/> list positionally (the builder emits exactly
+    /// one <see cref="NetDetail"/> per record, in order) and counts VIA subnets into the
+    /// additive <see cref="NetDetail.ViaCount"/> field. Nets without VIA subnets keep
+    /// their original instance.
+    /// </summary>
+    private static IReadOnlyList<NetDetail> ApplyViaCounts(IReadOnlyList<NetDetail> nets, EdaDataFile? edaData)
+    {
+        if (edaData is null || nets.Count == 0)
+        {
+            return nets;
+        }
+
+        var result = new List<NetDetail>(nets.Count);
+        for (var i = 0; i < nets.Count && i < edaData.NetRecords.Count; i++)
+        {
+            var viaCount = 0;
+            foreach (var subnet in edaData.NetRecords[i].SubnetRecords)
+            {
+                if (subnet.Type == EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via)
+                {
+                    viaCount++;
+                }
+            }
+
+            result.Add(viaCount > 0 ? nets[i] with { ViaCount = viaCount } : nets[i]);
+        }
+
+        return result;
     }
 
     /// <summary>

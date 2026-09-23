@@ -1,0 +1,103 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OdbDesignInfoClient.Core.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="OdbDesignInfoClient.Views.SymbolsTabView"
+             x:DataType="vm:SymbolsTabViewModel">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+        <!-- Filter Bar -->
+        <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Filter:"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1"
+                         Text="{Binding FilterText}"
+                         PlaceholderText="Search symbols by name..."
+                         MinWidth="300"/>
+                <Button Grid.Column="2"
+                        Content="✕"
+                        Command="{Binding ClearFilterCommand}"
+                        ToolTip.Tip="Clear filter"
+                        MinWidth="30"
+                        Margin="4,0,0,0"/>
+                <Button Grid.Column="3"
+                        Content="Refresh"
+                        Command="{Binding RefreshCommand}"
+                        Margin="8,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Error Banner -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding HasError}"
+                Background="#33F44336"
+                BorderBrush="#FFF44336"
+                BorderThickness="0,0,0,1"
+                Padding="8,4"
+                ZIndex="99">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
+        </Border>
+
+        <!-- Honest Empty State -->
+        <Border Grid.Row="3"
+                IsVisible="{Binding IsEmpty}"
+                Background="{DynamicResource SystemControlBackgroundChromeLowBrush}"
+                Padding="16">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <TextBlock Text="No symbols"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding EmptyMessage}"
+                           Opacity="0.7"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="520"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Loading Overlay -->
+        <Border Grid.Row="3"
+                IsVisible="{Binding IsLoading}"
+                Background="#80000000"
+                ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading symbols..."
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Data Grid -->
+        <DataGrid Grid.Row="3"
+                  ItemsSource="{Binding Symbols}"
+                  SelectedItem="{Binding SelectedSymbol}"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Symbol Name" Binding="{Binding Name}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="4" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Showing "/>
+                <TextBlock Text="{Binding FilteredCount}"/>
+                <TextBlock Text=" of "/>
+                <TextBlock Text="{Binding TotalCount}"/>
+                <TextBlock Text=" symbols"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</UserControl>

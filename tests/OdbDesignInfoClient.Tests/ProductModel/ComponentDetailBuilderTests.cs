@@ -340,4 +340,48 @@ public class ComponentDetailBuilderTests
         Assert.Same(DesignProductModel.Empty, reader.Read(design, "no-such-step"));
         Assert.Same(DesignProductModel.Empty, reader.Read(null, "step"));
     }
+
+    [Fact]
+    public void Read_ProjectsViaCounts_WithoutTouchingToeprintJoins()
+    {
+        // Synthetic design with VIA subnets on VCC (2) and GND (1); CLK has none.
+        var (top, bottom) = CreateSyntheticComponents();
+        var eda = CreateSyntheticEdaData();
+        eda.NetRecords[0].SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord
+        {
+            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
+        });
+        eda.NetRecords[0].SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord
+        {
+            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
+        });
+        eda.NetRecords[1].SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord
+        {
+            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
+        });
+
+        var step = new StepDirectory { Name = "step" };
+        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
+        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
+        step.Edadatafile = eda;
+
+        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
+        design.FileModel.StepsByName["step"] = step;
+
+        var model = new ProductModelReader(NullLogger<ProductModelReader>.Instance).Read(design, "step");
+
+        // The additive ViaCount field carries the per-net VIA subnet counts...
+        Assert.Equal(2, model.Nets.Single(n => n.Name == "VCC").ViaCount);
+        Assert.Equal(1, model.Nets.Single(n => n.Name == "GND").ViaCount);
+        Assert.Equal(0, model.Nets.Single(n => n.Name == "CLK").ViaCount);
+
+        // ...while the toeprint connections stay exactly as the builder made them
+        // (VIA subnets never leak into the pin connections; U1 touches VCC twice).
+        Assert.Equal(4, model.Nets.Single(n => n.Name == "VCC").Connections.Count);
+        Assert.Equal(3, model.Nets.Single(n => n.Name == "GND").Connections.Count);
+        Assert.Equal(2, model.Nets.Single(n => n.Name == "CLK").Connections.Count);
+
+        // Total subnet count still reports every subnet (4 toeprints + 2 vias).
+        Assert.Equal(6, model.Nets.Single(n => n.Name == "VCC").SubnetCount);
+    }
 }

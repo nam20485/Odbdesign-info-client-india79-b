@@ -191,6 +191,118 @@ public class ServerIntegrationTests
     }
 
     [Fact]
+    public async Task Live_SymbolsEndpoint_ReturnsEnvelopeNames()
+    {
+        if (!TryCreateClient(out var sut, out var skip))
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // New REST route live-check: GET /filemodels/{name}/symbols →
+        // { "symbols": ["drill_symbol1", …] } (names only — no metadata).
+        var symbols = await sut.GetSymbolsAsync(_designName);
+
+        _output.WriteLine($"Design '{_designName}': {symbols.Count} symbols");
+        Assert.NotEmpty(symbols);
+        Assert.All(symbols.Take(5), s => Assert.False(string.IsNullOrEmpty(s.Name)));
+        _output.WriteLine($"Sample symbols: {string.Join(", ", symbols.Take(5).Select(s => s.Name))}");
+    }
+
+    [Fact]
+    public async Task Live_StepSummaries_JoinStepsWithStepHeader()
+    {
+        if (!TryCreateClient(out var sut, out var skip))
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // New REST route live-check: GET /filemodels/{name}/steps/{step}/stephdr →
+        // { "xDatum":0, "yDatum":0, "id":5, "xOrigin":0, "yOrigin":0, … }.
+        var steps = await sut.GetStepSummariesAsync(_designName);
+
+        _output.WriteLine($"Design '{_designName}': {steps.Count} steps");
+        Assert.NotEmpty(steps);
+        Assert.All(steps, s => Assert.False(string.IsNullOrEmpty(s.Name)));
+        Assert.Contains(steps, s => s.Name == _stepName);
+        var target = steps.First(s => s.Name == _stepName);
+        Assert.NotNull(target.Id);
+        _output.WriteLine(
+            $"Step '{target.Name}': id={target.Id} origin=({target.XOrigin},{target.YOrigin}) " +
+            $"datum=({target.XDatum},{target.YDatum}) repeats={target.RepeatCount}");
+    }
+
+    [Fact]
+    public async Task Live_EdaDataEndpoint_ParsesNetSummaries()
+    {
+        if (!TryCreateClient(out var sut, out var skip))
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // New REST route live-check: GET /filemodels/{name}/steps/{step}/eda_data →
+        // the full EdaDataFile JSON (multi-MB); the service summarizes it into
+        // header fields plus per-net subnet counts.
+        var summary = await sut.GetEdaDataSummaryAsync(_designName, _stepName);
+
+        Assert.NotNull(summary);
+        _output.WriteLine(
+            $"eda_data: units={summary!.Units} source='{summary.Source}' " +
+            $"layers={summary.LayerCount} nets={summary.Nets.Count}");
+        Assert.NotEmpty(summary.Units);
+        Assert.NotEmpty(summary.Nets);
+
+        // sample_design carries all four subnet types (verified live: ~2811 toeprints,
+        // ~2103 traces, ~4060 vias, ~41 planes across 644 nets).
+        Assert.Contains(summary.Nets, n => n.ToeprintCount > 0);
+        Assert.Contains(summary.Nets, n => n.ViaCount > 0);
+        var totalVias = summary.Nets.Sum(n => n.ViaCount);
+        _output.WriteLine($"Subnet totals: vias={totalVias}");
+        Assert.True(totalVias > 0, $"expected VIA subnets in {_designName}, got {totalVias}");
+    }
+
+    [Fact]
+    public async Task Live_ViaSummaries_ExposePerNetViaCounts()
+    {
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // Vias ride the gRPC product model: per-net VIA subnet counts projected onto
+        // the builder's net details (additive field, no join changes).
+        var vias = await sut.GetViaSummariesAsync(_designName, _stepName);
+
+        _output.WriteLine($"Design '{_designName}/{_stepName}': vias on {vias.Count} nets, total {vias.Sum(v => v.ViaCount)}");
+        Assert.NotEmpty(vias);
+        Assert.All(vias, v => Assert.True(v.ViaCount > 0));
+        Assert.Contains(vias, v => v.PinCount > 0);
+    }
+
+    [Fact]
+    public async Task Live_NetsIncludeRealViaCounts_FromGrpcProductModel()
+    {
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // The Nets tab ViaCount column is now fed from the EDA net records (it was
+        // hard-coded 0 before): at least one net of sample_design must report vias.
+        var nets = await sut.GetNetsAsync(_designName, _stepName);
+
+        var withVias = nets.Count(n => n.ViaCount > 0);
+        _output.WriteLine($"Nets with vias: {withVias} of {nets.Count}");
+        Assert.True(withVias > 0, $"expected nets with real via counts, got {withVias} of {nets.Count}");
+    }
+
+    [Fact]
     public async Task Live_UnauthenticatedRequest_SurfacesUnauthorizedError()
     {
         if (!TryCreateClient(out var sut, out var skip, withCredentials: false))

@@ -17,7 +17,7 @@
         <Border DockPanel.Dock="Top" 
                 Background="{DynamicResource SystemControlBackgroundChromeMediumBrush}" 
                 Padding="8">
-            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto">
                 <!-- Connection Indicator -->
                 <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Panel Width="12" Height="12">
@@ -30,14 +30,14 @@
                 </StackPanel>
 
                 <!-- Connection State Text -->
-                <TextBlock Grid.Column="1" 
-                           Text="{Binding ConnectionState}" 
+                <TextBlock Grid.Column="1"
+                           Text="{Binding ConnectionState}"
                            VerticalAlignment="Center"
                            Margin="8,0"
                            Opacity="0.7"/>
 
                 <!-- Design Selector -->
-                <ComboBox Grid.Column="3" 
+                <ComboBox Grid.Column="3"
                           ItemsSource="{Binding Designs}"
                           SelectedItem="{Binding SelectedDesign}"
                           MinWidth="200"
@@ -51,16 +51,32 @@
                     </ComboBox.ItemTemplate>
                 </ComboBox>
 
+                <!-- Step Selector: changing the step is a context change (clears caches, reloads active tab) -->
+                <ComboBox Grid.Column="4"
+                          ItemsSource="{Binding Steps}"
+                          SelectedItem="{Binding SelectedStep}"
+                          MinWidth="140"
+                          Margin="8,0"
+                          PlaceholderText="Select a step..."
+                          ToolTip.Tip="Active step (context change reloads data)"
+                          IsEnabled="{Binding IsConnected}">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <TextBlock Text="{Binding}"/>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+
                 <!-- Refresh Button -->
-                <Button Grid.Column="4" 
-                        Command="{Binding RefreshCommand}" 
-                        Margin="4,0" 
+                <Button Grid.Column="5"
+                        Command="{Binding RefreshCommand}"
+                        Margin="4,0"
                         ToolTip.Tip="Refresh data">
                     <TextBlock Text="Refresh"/>
                 </Button>
 
                 <!-- Connect/Disconnect Button -->
-                <Button Grid.Column="5" 
+                <Button Grid.Column="6"
                         Command="{Binding ConnectCommand}"
                         Margin="4,0">
                     <TextBlock Text="Connect"/>
@@ -130,6 +146,21 @@
             </TabItem>
             <TabItem Header="Parts">
                 <views:PartsTabView DataContext="{Binding PartsTab}"/>
+            </TabItem>
+            <TabItem Header="Pins">
+                <views:PinsTabView DataContext="{Binding PinsTab}"/>
+            </TabItem>
+            <TabItem Header="Vias">
+                <views:ViasTabView DataContext="{Binding ViasTab}"/>
+            </TabItem>
+            <TabItem Header="Step Hierarchy">
+                <views:StepHierarchyTabView DataContext="{Binding StepHierarchyTab}"/>
+            </TabItem>
+            <TabItem Header="Symbols Library">
+                <views:SymbolsTabView DataContext="{Binding SymbolsTab}"/>
+            </TabItem>
+            <TabItem Header="EDA Data">
+                <views:EdaDataTabView DataContext="{Binding EdaDataTab}"/>
             </TabItem>
         </TabControl>
     </DockPanel>

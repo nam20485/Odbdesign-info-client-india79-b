@@ -1,0 +1,110 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OdbDesignInfoClient.Core.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="OdbDesignInfoClient.Views.StepHierarchyTabView"
+             x:DataType="vm:StepHierarchyTabViewModel">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Step Hierarchy"
+                           FontWeight="Bold"
+                           FontSize="16"
+                           VerticalAlignment="Center"/>
+                <Button Grid.Column="1"
+                        Content="Refresh"
+                        Command="{Binding RefreshCommand}"/>
+            </Grid>
+        </Border>
+
+        <!-- Error Banner -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding HasError}"
+                Background="#33F44336"
+                BorderBrush="#FFF44336"
+                BorderThickness="0,0,0,1"
+                Padding="8,4"
+                ZIndex="99">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
+        </Border>
+
+        <!-- Honest Empty State -->
+        <Border Grid.Row="3"
+                IsVisible="{Binding IsEmpty}"
+                Background="{DynamicResource SystemControlBackgroundChromeLowBrush}"
+                Padding="16">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <TextBlock Text="No steps"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding EmptyMessage}"
+                           Opacity="0.7"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="520"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Loading Overlay -->
+        <Border Grid.Row="3"
+                IsVisible="{Binding IsLoading}"
+                Background="#80000000"
+                ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading steps..."
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Data Grid -->
+        <DataGrid Grid.Row="3"
+                  ItemsSource="{Binding Steps}"
+                  SelectedItem="{Binding SelectedStep}"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Step" Binding="{Binding Name}" Width="200"/>
+                <DataGridTextColumn Header="ID" Binding="{Binding Id}" Width="80"/>
+                <DataGridTextColumn Header="X Origin" Binding="{Binding XOrigin}" Width="100"/>
+                <DataGridTextColumn Header="Y Origin" Binding="{Binding YOrigin}" Width="100"/>
+                <DataGridTextColumn Header="X Datum" Binding="{Binding XDatum}" Width="100"/>
+                <DataGridTextColumn Header="Y Datum" Binding="{Binding YDatum}" Width="100"/>
+                <DataGridTextColumn Header="Repeats" Binding="{Binding RepeatCount}" Width="90"/>
+                <DataGridTemplateColumn Header="Actions" Width="110">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate x:DataType="vm:StepRowViewModel">
+                            <!-- Promotes the step to the active step context -->
+                            <Button Content="Set Active"
+                                    Command="{Binding SetActiveCommand}"
+                                    Padding="8,2"
+                                    HorizontalAlignment="Left"
+                                    VerticalAlignment="Center"
+                                    ToolTip.Tip="Make this the active step"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="4" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <TextBlock>
+                <Run Text="Total: "/>
+                <Run Text="{Binding TotalSteps}"/>
+                <Run Text=" steps (flat list: the server exposes no nested step hierarchy)"/>
+            </TextBlock>
+        </Border>
+    </Grid>
+</UserControl>

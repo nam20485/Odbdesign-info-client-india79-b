@@ -19,6 +19,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private CancellationTokenSource? _loadCts;
     private ConnectionState _previousState = ConnectionState.Disconnected;
+    private bool _isSyncingStepFromDesign;
 
     [ObservableProperty]
     private string _title = "OdbDesignInfo Client";
@@ -31,6 +32,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private IReadOnlyList<Design> _designs = [];
+
+    [ObservableProperty]
+    private IReadOnlyList<string> _steps = [];
+
+    [ObservableProperty]
+    private string? _selectedStep;
 
     [ObservableProperty]
     private int _selectedTabIndex;
@@ -71,6 +78,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public DrillToolsTabViewModel DrillToolsTab { get; }
     public PackagesTabViewModel PackagesTab { get; }
     public PartsTabViewModel PartsTab { get; }
+    public PinsTabViewModel PinsTab { get; }
+    public ViasTabViewModel ViasTab { get; }
+    public StepHierarchyTabViewModel StepHierarchyTab { get; }
+    public SymbolsTabViewModel SymbolsTab { get; }
+    public EdaDataTabViewModel EdaDataTab { get; }
 
     /// <summary>
     /// Initializes a new instance of the MainViewModel.
@@ -86,7 +98,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
         StackupTabViewModel stackupTab,
         DrillToolsTabViewModel drillToolsTab,
         PackagesTabViewModel packagesTab,
-        PartsTabViewModel partsTab)
+        PartsTabViewModel partsTab,
+        PinsTabViewModel pinsTab,
+        ViasTabViewModel viasTab,
+        StepHierarchyTabViewModel stepHierarchyTab,
+        SymbolsTabViewModel symbolsTab,
+        EdaDataTabViewModel edaDataTab)
     {
         _connectionService = connectionService;
         _designService = designService;
@@ -101,6 +118,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
         DrillToolsTab = drillToolsTab;
         PackagesTab = packagesTab;
         PartsTab = partsTab;
+        PinsTab = pinsTab;
+        ViasTab = viasTab;
+        StepHierarchyTab = stepHierarchyTab;
+        SymbolsTab = symbolsTab;
+        EdaDataTab = edaDataTab;
 
         // Subscribe to connection state changes
         _connectionService.StateChanged += OnConnectionStateChanged;
@@ -108,6 +130,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         // Subscribe to navigation events
         _navigationService.Navigated += OnNavigated;
+
+        // Step rows in the Step Hierarchy tab can promote a step to the active context
+        StepHierarchyTab.StepActivationRequested += OnStepActivationRequested;
     }
 
     /// <summary>
@@ -281,6 +306,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _designService.ClearCache();
         Designs = [];
         SelectedDesign = null;
+        Steps = [];
+        SelectedStep = null;
     }
 
     /// <summary>
@@ -331,6 +358,20 @@ public partial class MainViewModel : ObservableObject, IDisposable
         {
             StatusMessage = $"Selected design: {value.Name}";
 
+            // Repopulate the step selector for the new design. The guard flag keeps
+            // the programmatic step change from triggering the step-change reload
+            // below — the design-switch reload right after covers the new context.
+            _isSyncingStepFromDesign = true;
+            try
+            {
+                Steps = value.Steps;
+                SelectedStep = Steps.FirstOrDefault();
+            }
+            finally
+            {
+                _isSyncingStepFromDesign = false;
+            }
+
             // A design switch invalidates everything fetched for the previous
             // design: cancel in-flight loads, clear server caches, and let the
             // load-once guards re-arm for the new design
@@ -339,6 +380,40 @@ public partial class MainViewModel : ObservableObject, IDisposable
             _designService.ClearCache();
 
             _ = RunTabLoadSafeAsync(forceReload: false);
+        }
+    }
+
+    partial void OnSelectedStepChanged(string? value)
+    {
+        // Programmatic updates during a design switch are covered by the design
+        // change handler; only user-driven step changes reload here.
+        if (_isSyncingStepFromDesign || string.IsNullOrEmpty(value) || SelectedDesign == null)
+        {
+            return;
+        }
+
+        StatusMessage = $"Selected step: {value}";
+
+        // A step switch is a context change (Arch §5.1): cancel in-flight loads,
+        // invalidate caches, and reload the active tab for the new step. The other
+        // tabs reload lazily — their load-once guards key on (design, step), so the
+        // new step re-arms them on first activation.
+        _loadCts?.Cancel();
+        _loadCts = new CancellationTokenSource();
+        _designService.ClearCache();
+
+        _ = RunTabLoadSafeAsync(forceReload: false);
+    }
+
+    /// <summary>
+    /// Handles a step activation from the Step Hierarchy tab by promoting that
+    /// step to the global step context (same as picking it in the step selector).
+    /// </summary>
+    private void OnStepActivationRequested(object? sender, string stepName)
+    {
+        if (!string.IsNullOrEmpty(stepName) && Steps.Contains(stepName))
+        {
+            SelectedStep = stepName;
         }
     }
 
@@ -392,8 +467,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return false;
         }
 
-        var step = SelectedDesign.Steps.FirstOrDefault();
-        if (step == null)
+        var step = SelectedStep ?? SelectedDesign.Steps.FirstOrDefault();
+        if (string.IsNullOrEmpty(step))
         {
             StatusMessage = $"Design '{SelectedDesign.Name}' has no steps - nothing to load";
             return false;
@@ -416,7 +491,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
             StackupTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
             DrillToolsTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
             PackagesTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
-            PartsTab.LoadAsync(designId, stepName, cancellationToken, forceReload)
+            PartsTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
+            PinsTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
+            ViasTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
+            StepHierarchyTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
+            SymbolsTab.LoadAsync(designId, stepName, cancellationToken, forceReload),
+            EdaDataTab.LoadAsync(designId, stepName, cancellationToken, forceReload)
         );
     }
 
@@ -446,6 +526,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
             case 5:
                 await PartsTab.LoadAsync(designId, stepName, cancellationToken, forceReload);
                 break;
+            case 6:
+                await PinsTab.LoadAsync(designId, stepName, cancellationToken, forceReload);
+                break;
+            case 7:
+                await ViasTab.LoadAsync(designId, stepName, cancellationToken, forceReload);
+                break;
+            case 8:
+                await StepHierarchyTab.LoadAsync(designId, stepName, cancellationToken, forceReload);
+                break;
+            case 9:
+                await SymbolsTab.LoadAsync(designId, stepName, cancellationToken, forceReload);
+                break;
+            case 10:
+                await EdaDataTab.LoadAsync(designId, stepName, cancellationToken, forceReload);
+                break;
         }
     }
 
@@ -463,6 +558,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _connectionService.StateChanged -= OnConnectionStateChanged;
         _crossProbeService.ConnectionChanged -= OnViewerConnectionChanged;
         _navigationService.Navigated -= OnNavigated;
+        StepHierarchyTab.StepActivationRequested -= OnStepActivationRequested;
 
         _loadCts?.Cancel();
         _loadCts?.Dispose();

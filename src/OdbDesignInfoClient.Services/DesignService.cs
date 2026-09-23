@@ -45,12 +45,18 @@ public class DesignService : IDesignService
     private readonly ConcurrentDictionary<string, IReadOnlyList<Net>> _netCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Layer>> _stackupCache = new();
     private readonly ConcurrentDictionary<string, DesignProductModel> _productModelCache = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<StepSummary>> _stepSummaryCache = new();
+    private readonly ConcurrentDictionary<string, IReadOnlyList<SymbolSummary>> _symbolCache = new();
+    private readonly ConcurrentDictionary<string, EdaDataSummary> _edaDataCache = new();
     private readonly ProductModelReader _productModelReader;
 
     private DateTime _designCacheRefresh = DateTime.MinValue;
     private DateTime _componentCacheRefresh = DateTime.MinValue;
     private DateTime _netCacheRefresh = DateTime.MinValue;
     private DateTime _stackupCacheRefresh = DateTime.MinValue;
+    private DateTime _stepSummaryCacheRefresh = DateTime.MinValue;
+    private DateTime _symbolCacheRefresh = DateTime.MinValue;
+    private DateTime _edaDataCacheRefresh = DateTime.MinValue;
     private readonly TimeSpan _cacheExpiration = TimeSpan.FromMinutes(5);
 
     /// <summary>
@@ -431,6 +437,8 @@ public class DesignService : IDesignService
             Number = (int)p.PinNumber,
             NetName = p.NetName ?? string.Empty,
             ElectricalType = string.Empty,
+            X = p.X,
+            Y = p.Y,
         }).ToList(),
     };
 
@@ -439,7 +447,7 @@ public class DesignService : IDesignService
     {
         Name = detail.Name,
         PinCount = detail.Connections.Count,
-        ViaCount = 0,
+        ViaCount = detail.ViaCount,
         Features = detail.Connections.Select(c => new NetFeature
         {
             FeatureType = "Pin",
@@ -932,6 +940,9 @@ public class DesignService : IDesignService
     private bool IsComponentCacheExpired() => DateTime.Now - _componentCacheRefresh > _cacheExpiration;
     private bool IsNetCacheExpired() => DateTime.Now - _netCacheRefresh > _cacheExpiration;
     private bool IsStackupCacheExpired() => DateTime.Now - _stackupCacheRefresh > _cacheExpiration;
+    private bool IsStepSummaryCacheExpired() => DateTime.Now - _stepSummaryCacheRefresh > _cacheExpiration;
+    private bool IsSymbolCacheExpired() => DateTime.Now - _symbolCacheRefresh > _cacheExpiration;
+    private bool IsEdaDataCacheExpired() => DateTime.Now - _edaDataCacheRefresh > _cacheExpiration;
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<DrillTool>> GetDrillToolsAsync(
@@ -1042,6 +1053,378 @@ public class DesignService : IDesignService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<StepSummary>> GetStepSummariesAsync(
+        string designId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting step summaries for design {DesignId}", designId);
+
+        if (_stepSummaryCache.TryGetValue(designId, out var cached) && !IsStepSummaryCacheExpired())
+        {
+            return cached;
+        }
+
+        var stepsResponse = await _restApi.GetStepsAsync(designId, cancellationToken);
+        if (stepsResponse.StatusCode == HttpStatusCode.NotFound)
+        {
+            return [];
+        }
+
+        if (!stepsResponse.IsSuccessStatusCode)
+        {
+            HandleHttpError(stepsResponse.StatusCode, designId, "steps");
+        }
+
+        if (string.IsNullOrWhiteSpace(stepsResponse.Content))
+        {
+            return [];
+        }
+
+        var steps = ParseStepsFromResponse(stepsResponse.Content, designId);
+        var summaries = new List<StepSummary>(steps.Count);
+        foreach (var step in steps)
+        {
+            var header = await GetStepHeaderAsync(designId, step, cancellationToken);
+            summaries.Add(new StepSummary
+            {
+                Name = step,
+                Id = header?.Id,
+                XOrigin = header?.XOrigin,
+                YOrigin = header?.YOrigin,
+                XDatum = header?.XDatum,
+                YDatum = header?.YDatum,
+                RepeatCount = header?.RepeatCount ?? 0,
+            });
+        }
+
+        _stepSummaryCache[designId] = summaries;
+        _stepSummaryCacheRefresh = DateTime.Now;
+        return summaries;
+    }
+
+    /// <summary>
+    /// Fetches and parses one step's header projection (stephdr route). Returns null
+    /// when the route is unavailable or malformed — the header is metadata, so a
+    /// missing header degrades the row to a bare step name instead of failing the tab.
+    /// </summary>
+    private async Task<StepHeaderData?> GetStepHeaderAsync(string designId, string stepName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var response = await _restApi.GetStepHdrAsync(designId, stepName, cancellationToken);
+            if (!response.IsSuccessStatusCode || string.IsNullOrWhiteSpace(response.Content))
+            {
+                _logger?.LogDebug(
+                    "Step header unavailable for {DesignId}/{StepName} (status {StatusCode})",
+                    designId, stepName, response.StatusCode);
+                return null;
+            }
+
+            return ParseStepHeader(response.Content);
+        }
+        catch (Exception ex) when (ex is not UnauthorizedAccessException and not InvalidOperationException)
+        {
+            _logger?.LogWarning(ex, "Failed to read step header for {DesignId}/{StepName}", designId, stepName);
+            return null;
+        }
+    }
+
+    /// <summary>Parsed step-header projection fields.</summary>
+    private sealed record StepHeaderData(
+        int? Id,
+        double? XOrigin,
+        double? YOrigin,
+        double? XDatum,
+        double? YDatum,
+        int RepeatCount);
+
+    /// <summary>
+    /// Parses the stephdr JSON (protobuf camelCase) tolerantly: every field is optional
+    /// and absent fields stay null rather than being defaulted to fabricated values.
+    /// </summary>
+    private static StepHeaderData? ParseStepHeader(string content)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content);
+            var root = doc.RootElement;
+            return new StepHeaderData(
+                GetNullableInt(root, "id"),
+                GetNullableDouble(root, "xOrigin"),
+                GetNullableDouble(root, "yOrigin"),
+                GetNullableDouble(root, "xDatum"),
+                GetNullableDouble(root, "yDatum"),
+                root.TryGetProperty("stepRepeatRecords", out var repeats) && repeats.ValueKind == JsonValueKind.Array
+                    ? repeats.GetArrayLength()
+                    : 0);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static int? GetNullableInt(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetInt32()
+            : null;
+
+    private static double? GetNullableDouble(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetDouble()
+            : null;
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<SymbolSummary>> GetSymbolsAsync(
+        string designId,
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting symbols for design {DesignId}", designId);
+
+        if (_symbolCache.TryGetValue(designId, out var cached) && !IsSymbolCacheExpired())
+        {
+            return cached;
+        }
+
+        var response = await _restApi.GetSymbolNamesAsync(designId, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return [];
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            HandleHttpError(response.StatusCode, designId, "symbols");
+        }
+
+        if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            return [];
+        }
+
+        var symbols = ParseSymbolNames(response.Content, designId);
+        _symbolCache[designId] = symbols;
+        _symbolCacheRefresh = DateTime.Now;
+        return symbols;
+    }
+
+    /// <summary>
+    /// Parses the symbols response. Accepts both the observed envelope format
+    /// ({ "symbols": ["r10", …] }) and a bare string array, filtering empty names.
+    /// </summary>
+    private List<SymbolSummary> ParseSymbolNames(string? content, string designId)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content ?? "[]");
+            var root = doc.RootElement;
+            JsonElement? array = root.ValueKind == JsonValueKind.Array
+                ? root
+                : root.ValueKind == JsonValueKind.Object && root.TryGetProperty("symbols", out var symbols) && symbols.ValueKind == JsonValueKind.Array
+                    ? symbols
+                    : null;
+
+            if (array is null)
+            {
+                _logger?.LogWarning("Unable to parse symbols from response for design '{DesignId}'", designId);
+                return [];
+            }
+
+            return array.Value.EnumerateArray()
+                .Select(e => e.GetString() ?? string.Empty)
+                .Where(s => !string.IsNullOrEmpty(s))
+                .Select(name => new SymbolSummary { Name = name })
+                .ToList();
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogError(ex, "Failed to parse symbols JSON for design {DesignId}", designId);
+            throw new InvalidOperationException($"Failed to parse symbols response: {ex.Message}", ex);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<ViaSummary>> GetViaSummariesAsync(
+        string designId,
+        string stepName,
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting via summaries for design {DesignId}, step {StepName}", designId, stepName);
+
+        // Via subnets live in the EDA net records inside the gRPC FileModel; the REST
+        // nets projection exposes no via information. Without the product model the
+        // list is honestly empty rather than fabricated.
+        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        if (model is null)
+        {
+            _logger?.LogInformation(
+                "Via summaries unavailable for {DesignId}/{StepName} (gRPC product model not available)",
+                designId, stepName);
+            return [];
+        }
+
+        return model.Nets
+            .Where(n => n.ViaCount > 0)
+            .Select(n => new ViaSummary
+            {
+                NetName = n.Name,
+                NetIndex = n.Index,
+                ViaCount = n.ViaCount,
+                PinCount = n.Connections.Count,
+            })
+            .ToList();
+    }
+
+    /// <inheritdoc />
+    public async Task<EdaDataSummary?> GetEdaDataSummaryAsync(
+        string designId,
+        string stepName,
+        CancellationToken cancellationToken = default)
+    {
+        _logger?.LogInformation("Getting EDA data summary for design {DesignId}, step {StepName}", designId, stepName);
+
+        var cacheKey = $"{designId}:{stepName}:eda";
+        if (_edaDataCache.TryGetValue(cacheKey, out var cached) && !IsEdaDataCacheExpired())
+        {
+            return cached;
+        }
+
+        var response = await _restApi.GetEdaDataAsync(designId, stepName, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound || response.StatusCode == HttpStatusCode.NoContent)
+        {
+            _logger?.LogInformation("No EDA data for {DesignId}/{StepName} (status {StatusCode})",
+                designId, stepName, response.StatusCode);
+            return null;
+        }
+
+        if (!response.IsSuccessStatusCode)
+        {
+            HandleHttpError(response.StatusCode, designId, "eda_data");
+        }
+
+        if (string.IsNullOrWhiteSpace(response.Content))
+        {
+            _logger?.LogInformation("Empty EDA data content for {DesignId}/{StepName}", designId, stepName);
+            return null;
+        }
+
+        var summary = ParseEdaDataSummary(response.Content, designId, stepName);
+        if (summary is null)
+        {
+            return null;
+        }
+
+        _edaDataCache[cacheKey] = summary;
+        _edaDataCacheRefresh = DateTime.Now;
+        return summary;
+    }
+
+    /// <summary>
+    /// Summarizes the (potentially multi-megabyte) eda_data JSON into header fields and
+    /// per-net subnet/attribute counts. Defensive: optional protobuf fields are absent in
+    /// the JSON and every section degrades to empty when missing.
+    /// </summary>
+    private EdaDataSummary? ParseEdaDataSummary(string? content, string designId, string stepName)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(content ?? "{}");
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                _logger?.LogWarning("Unexpected eda_data shape for {DesignId}/{StepName}", designId, stepName);
+                return null;
+            }
+
+            var nets = new List<EdaNetSummary>();
+            if (root.TryGetProperty("netRecords", out var netRecords) && netRecords.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var net in netRecords.EnumerateArray())
+                {
+                    var toeprints = 0;
+                    var traces = 0;
+                    var vias = 0;
+                    var planes = 0;
+                    if (net.TryGetProperty("subnetRecords", out var subnets) && subnets.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var subnet in subnets.EnumerateArray())
+                        {
+                            var type = subnet.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : null;
+                            switch (type?.ToUpperInvariant())
+                            {
+                                case "TOEPRINT": toeprints++; break;
+                                case "TRACE": traces++; break;
+                                case "VIA": vias++; break;
+                                case "PLANE": planes++; break;
+                            }
+                        }
+                    }
+
+                    var attributeCount = 0;
+                    if (net.TryGetProperty("propertyRecords", out var properties) && properties.ValueKind == JsonValueKind.Array)
+                    {
+                        attributeCount += properties.GetArrayLength();
+                    }
+
+                    if (net.TryGetProperty("attributeLookupTable", out var lookup) && lookup.ValueKind == JsonValueKind.Object)
+                    {
+                        attributeCount += lookup.EnumerateObject().Count();
+                    }
+
+                    var name = net.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
+                    var index = GetNullableUint(net, "index") ?? 0;
+
+                    nets.Add(new EdaNetSummary
+                    {
+                        // Same fallback convention as the product-model reader: unnamed
+                        // nets display as "#Index" instead of an empty cell.
+                        Name = string.IsNullOrEmpty(name) ? $"#{index}" : name!,
+                        Index = index,
+                        ToeprintCount = toeprints,
+                        TraceCount = traces,
+                        ViaCount = vias,
+                        PlaneCount = planes,
+                        AttributeCount = attributeCount,
+                    });
+                }
+            }
+
+            var attributeNames = new List<string>();
+            if (root.TryGetProperty("attributeNames", out var names) && names.ValueKind == JsonValueKind.Array)
+            {
+                attributeNames.AddRange(names.EnumerateArray().Select(n => n.GetString() ?? string.Empty).Where(n => !string.IsNullOrEmpty(n)));
+            }
+
+            return new EdaDataSummary
+            {
+                Units = GetStringProperty(root, "units"),
+                Source = GetStringProperty(root, "source"),
+                Path = GetStringProperty(root, "path"),
+                LayerCount = root.TryGetProperty("layerNames", out var layers) && layers.ValueKind == JsonValueKind.Array
+                    ? layers.GetArrayLength()
+                    : 0,
+                AttributeNames = attributeNames,
+                Nets = nets,
+            };
+        }
+        catch (JsonException ex)
+        {
+            _logger?.LogError(ex, "Failed to parse eda_data JSON for {DesignId}/{StepName}", designId, stepName);
+            throw new InvalidOperationException($"Failed to parse eda_data response: {ex.Message}", ex);
+        }
+    }
+
+    private static uint? GetNullableUint(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetUInt32()
+            : null;
+
+    private static string GetStringProperty(JsonElement element, string name) =>
+        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
     /// <summary>
     /// Maps a product-model <see cref="PackageDetail"/> to the domain <see cref="Package"/>,
     /// joining the placed components that reference the package into usage rows.
@@ -1130,10 +1513,16 @@ public class DesignService : IDesignService
         _netCache.Clear();
         _stackupCache.Clear();
         _productModelCache.Clear();
+        _stepSummaryCache.Clear();
+        _symbolCache.Clear();
+        _edaDataCache.Clear();
         _designCacheRefresh = DateTime.MinValue;
         _componentCacheRefresh = DateTime.MinValue;
         _netCacheRefresh = DateTime.MinValue;
         _stackupCacheRefresh = DateTime.MinValue;
+        _stepSummaryCacheRefresh = DateTime.MinValue;
+        _symbolCacheRefresh = DateTime.MinValue;
+        _edaDataCacheRefresh = DateTime.MinValue;
     }
 
     /// <summary>

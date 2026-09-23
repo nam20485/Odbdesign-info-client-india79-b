@@ -57,12 +57,23 @@ public sealed record NetSummary(
     int PinCount);
 
 /// <summary>Full net information shown on the net inspector tab.</summary>
+/// <param name="Name">The net's display name (raw name, "#Index" fallback for unnamed nets).</param>
+/// <param name="Index">The net record's index field.</param>
+/// <param name="SubnetCount">Total number of subnet records on the net (all types).</param>
+/// <param name="Connections">The toeprint connections (component pins) of the net.</param>
+/// <param name="Attributes">The net record's resolved attributes.</param>
+/// <param name="ViaCount">
+/// Number of VIA subnets on the net record. Additive field (defaults to 0): it is
+/// projected onto the builder's output by <see cref="ProductModelReader"/> from the
+/// same EDA net records, without touching the toeprint join.
+/// </param>
 public sealed record NetDetail(
     string Name,
     uint Index,
     int SubnetCount,
     IReadOnlyList<NetConnection> Connections,
-    IReadOnlyList<NameValue> Attributes);
+    IReadOnlyList<NameValue> Attributes,
+    int ViaCount = 0);
 
 /// <summary>One toeprint connection of a net: a component pin on a board side.</summary>
 public sealed record NetConnection(

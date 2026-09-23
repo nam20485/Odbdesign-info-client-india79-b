@@ -91,6 +91,30 @@ public class NetsTabViewModelTests
         Assert.Equal(2, _sut.FilteredCount);
     }
 
+    [Fact]
+    public async Task NavigateToNet_SendsExactlyOneNetHighlightCrossProbe()
+    {
+        // Arrange
+        _mockCrossProbeService.Setup(x => x.IsConnected).Returns(true);
+        _mockDesignService
+            .Setup(x => x.GetNetsAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Net("GND"), Net("CLK_25MHZ")]);
+        await _sut.LoadAsync("design-1", "step");
+
+        // Act - deep-link into the Nets tab
+        _sut.NavigateToNet("gnd");
+
+        // Assert - the deep-link converges on the selection-change handler (Arch §5.3
+        // step 6): exactly one net highlight message per user action, symmetric to the
+        // component path's select message, and no component select on net navigation
+        _mockCrossProbeService.Verify(
+            x => x.HighlightNetAsync("GND", It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockCrossProbeService.Verify(
+            x => x.SelectAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     /// <summary>Polls until the 300 ms filter debounce has applied (condition holds), bounded to ~5 s.</summary>
     private static async Task WaitForFilterAppliedAsync(Func<bool> condition)
     {

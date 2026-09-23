@@ -91,6 +91,29 @@ public class ComponentsTabViewModelTests
         Assert.Equal(2, _sut.FilteredCount);
     }
 
+    [Fact]
+    public async Task NavigateToComponent_SendsExactlyOneComponentSelectCrossProbe()
+    {
+        // Arrange
+        _mockCrossProbeService.Setup(x => x.IsConnected).Returns(true);
+        _mockDesignService
+            .Setup(x => x.GetComponentsAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Component("R1", "10K", "0402"), Component("C2", "100N", "0603")]);
+        await _sut.LoadAsync("design-1", "step");
+
+        // Act - deep-link into the Components tab
+        _sut.NavigateToComponent("C2");
+
+        // Assert - the deep-link converges on the selection-change handler (Arch §5.3
+        // step 6): exactly one select message per user action, never a net highlight
+        _mockCrossProbeService.Verify(
+            x => x.SelectAsync("component", "C2", It.IsAny<bool>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockCrossProbeService.Verify(
+            x => x.HighlightNetAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     /// <summary>Polls until the 300 ms filter debounce has applied (condition holds), bounded to ~5 s.</summary>
     private static async Task WaitForFilterAppliedAsync(Func<bool> condition)
     {

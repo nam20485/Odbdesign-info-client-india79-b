@@ -8,5 +8,35 @@
         <FluentTheme />
         <StyleInclude Source="avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"/>
         <StyleInclude Source="avares://TreeDataGrid.Avalonia/Themes/Fluent.axaml"/>
+
+        <!-- Deep-link flash highlight (Arch §5.3 step 5): when a deep-link lands on a
+             row, the target row's background fades amber -> transparent over ~1.5 s so
+             the eye finds it. The animation is attached on demand by adding the
+             deep-link-flash style class to the single realized row container (see
+             Views/RowFlash.cs); no per-row storyboards, virtualization is untouched. -->
+        <Style Selector="TreeDataGridRow.deep-link-flash">
+            <Style.Animations>
+                <Animation Duration="0:0:1.5" Easing="QuadraticEaseOut" FillMode="Forward">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Background" Value="#80FFB300"/>
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Background" Value="Transparent"/>
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
+        <Style Selector="DataGridRow.deep-link-flash">
+            <Style.Animations>
+                <Animation Duration="0:0:1.5" Easing="QuadraticEaseOut" FillMode="Forward">
+                    <KeyFrame Cue="0%">
+                        <Setter Property="Background" Value="#80FFB300"/>
+                    </KeyFrame>
+                    <KeyFrame Cue="100%">
+                        <Setter Property="Background" Value="Transparent"/>
+                    </KeyFrame>
+                </Animation>
+            </Style.Animations>
+        </Style>
     </Application.Styles>
 </Application>

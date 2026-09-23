@@ -76,17 +76,21 @@ public partial class NetsTabView : UserControl
 
     /// <summary>
     /// Pushes a programmatic ViewModel selection (e.g. NavigateToNet) into the grid,
-    /// then scrolls the row into view. Guarded against grid → ViewModel → grid feedback loops.
+    /// then scrolls the row into view and flashes it so the eye finds the deep-link target.
+    /// Guarded against grid → ViewModel → grid feedback loops.
     /// </summary>
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(NetsTabViewModel.SelectedNet))
         {
-            SyncGridSelection();
+            // User clicks reach here too, but only after the grid already selected the
+            // row — SyncGridSelection then early-returns, so only VM-first selections
+            // (deep-links) select, scroll and flash.
+            SyncGridSelection(flash: true);
         }
     }
 
-    private void SyncGridSelection()
+    private void SyncGridSelection(bool flash = false)
     {
         if (_isSyncingSelection || _viewModel is null)
         {
@@ -116,8 +120,17 @@ public partial class NetsTabView : UserControl
             _isSyncingSelection = false;
         }
 
-        // Rows realize asynchronously; bring the row into view once layout has settled.
-        Dispatcher.UIThread.Post(() => BringModelIntoView(target), DispatcherPriority.Loaded);
+        // Rows realize asynchronously; bring the row into view once layout has
+        // settled, then (for deep-links) flash it once the scrolled-to container
+        // has been realized — one layout pass after the bring-into-view.
+        Dispatcher.UIThread.Post(() =>
+        {
+            BringModelIntoView(target);
+            if (flash)
+            {
+                Dispatcher.UIThread.Post(() => RowFlash.Flash(NetGrid, target), DispatcherPriority.Background);
+            }
+        }, DispatcherPriority.Loaded);
     }
 
     private int FindModelIndex(NetRowViewModel net)

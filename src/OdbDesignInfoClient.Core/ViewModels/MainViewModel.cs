@@ -173,27 +173,41 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private async void OnNavigated(object? sender, NavigationEventArgs e)
     {
+        var hasEntity = !string.IsNullOrEmpty(e.EntityType) && !string.IsNullOrEmpty(e.EntityId);
+
+        if (hasEntity)
+        {
+            try
+            {
+                // Ensure the target tab has data before navigating within it. The load
+                // runs against the deep-link's tab (SelectedTabIndex hasn't moved yet)
+                // and completes before the switch below, so the switch-triggered load
+                // becomes a load-once-guard no-op instead of a second concurrent fetch
+                // that could replace the rows right after the deep-link selects one.
+                await RunTabLoadSafeAsync(forceReload: false, tabIndex: e.TabIndex);
+            }
+            catch (Exception)
+            {
+                // Deep-linking is best-effort; tab error banners show the underlying failure
+            }
+        }
+
         SelectedTabIndex = e.TabIndex;
 
-        // Handle entity navigation (deep linking)
-        if (string.IsNullOrEmpty(e.EntityType) || string.IsNullOrEmpty(e.EntityId))
+        if (!hasEntity)
         {
             return;
         }
 
         try
         {
-            // Ensure the target tab has data before navigating within it;
-            // the load-once guard makes this a no-op when already loaded
-            await RunTabLoadSafeAsync(forceReload: false);
-
-            switch (e.EntityType.ToLowerInvariant())
+            switch (e.EntityType!.ToLowerInvariant())
             {
                 case "component":
-                    ComponentsTab.NavigateToComponent(e.EntityId);
+                    ComponentsTab.NavigateToComponent(e.EntityId!);
                     break;
                 case "net":
-                    NetsTab.NavigateToNet(e.EntityId);
+                    NetsTab.NavigateToNet(e.EntityId!);
                     break;
             }
         }
@@ -340,15 +354,16 @@ public partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>
     /// Runs the current tab load as a fire-and-forget task that cannot leak
     /// unobserved exceptions. Returns the token of the load generation, or
-    /// an invalid token when no load could start.
+    /// an invalid token when no load could start. When <paramref name="tabIndex"/>
+    /// is given, that tab is loaded instead of the currently selected one.
     /// </summary>
-    private async Task<CancellationToken> RunTabLoadSafeAsync(bool forceReload)
+    private async Task<CancellationToken> RunTabLoadSafeAsync(bool forceReload, int? tabIndex = null)
     {
         var cts = _loadCts ??= new CancellationTokenSource();
         var token = cts.Token;
         try
         {
-            await LoadCurrentTabDataAsync(token, forceReload);
+            await LoadCurrentTabDataAsync(token, forceReload, tabIndex);
         }
         catch (OperationCanceledException)
         {
@@ -405,13 +420,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
         );
     }
 
-    private async Task LoadCurrentTabDataAsync(CancellationToken cancellationToken = default, bool forceReload = false)
+    private async Task LoadCurrentTabDataAsync(CancellationToken cancellationToken = default, bool forceReload = false, int? tabIndex = null)
     {
         if (!TryGetSelectionContext(out var designId, out var stepName))
             return;
 
-        // Load data only for the current tab (lazy loading)
-        switch (SelectedTabIndex)
+        // Load data only for the requested tab (lazy loading)
+        switch (tabIndex ?? SelectedTabIndex)
         {
             case 0:
                 await ComponentsTab.LoadAsync(designId, stepName, cancellationToken, forceReload);

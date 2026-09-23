@@ -975,7 +975,7 @@ public class DesignService : IDesignService
         var model = await GetProductModelAsync(designId, stepName, cancellationToken);
         if (model is not null)
         {
-            return model.Packages.Select(MapPackageDetail).ToList();
+            return model.Packages.Select(p => MapPackageDetail(p, model.Components)).ToList();
         }
 
         // REST fallback: the /designs/{name}/packages control-plane endpoint.
@@ -1014,7 +1014,7 @@ public class DesignService : IDesignService
         if (model is not null)
         {
             return model.Parts
-                .Select(p => new Part { PartNumber = p.Name, UsageCount = p.UsageCount })
+                .Select(p => MapPartInfo(p, model.Components))
                 .ToList();
         }
 
@@ -1042,13 +1042,39 @@ public class DesignService : IDesignService
         }
     }
 
-    private static Package MapPackageDetail(PackageDetail detail) => new()
+    /// <summary>
+    /// Maps a product-model <see cref="PackageDetail"/> to the domain <see cref="Package"/>,
+    /// joining the placed components that reference the package into usage rows.
+    /// </summary>
+    private static Package MapPackageDetail(PackageDetail detail, IReadOnlyList<ComponentDetail> components) => new()
     {
         Name = detail.Name,
         Pitch = detail.Pitch ?? 0d,
         PinCount = detail.PinCount,
         Width = detail.XMax - detail.XMin,
         Height = detail.YMax - detail.YMin,
+        Usages = components
+            .Where(c => c.Package?.Name == detail.Name)
+            .Select(c => new EntityUsage
+            {
+                ComponentRefDes = c.Name,
+                PartName = c.PartName,
+            })
+            .ToList(),
+    };
+
+    /// <summary>Maps a product-model <see cref="PartInfo"/> to the domain <see cref="Part"/>.</summary>
+    private static Part MapPartInfo(PartInfo info, IReadOnlyList<ComponentDetail> components) => new()
+    {
+        PartNumber = info.Name,
+        UsageCount = info.UsageCount,
+        Usages = components
+            .Where(c => c.PartName == info.Name)
+            .Select(c => new EntityUsage
+            {
+                ComponentRefDes = c.Name,
+            })
+            .ToList(),
     };
 
     private static Package MapPackageDto(PackageDto dto) => new()

@@ -247,6 +247,23 @@ public record DrillTool
 }
 
 /// <summary>
+/// Represents a usage of an entity (package or part) by a placed component.
+/// </summary>
+public record EntityUsage
+{
+    /// <summary>
+    /// Gets or sets the reference designator of the component using the entity.
+    /// </summary>
+    public string ComponentRefDes { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the part name of the component using the entity, when known.
+    /// Null for part usages (the part number is the parent row).
+    /// </summary>
+    public string? PartName { get; init; }
+}
+
+/// <summary>
 /// Represents a package/footprint in an ODB++ design.
 /// </summary>
 public record Package
@@ -275,6 +292,12 @@ public record Package
     /// Gets or sets the package height.
     /// </summary>
     public double Height { get; init; }
+
+    /// <summary>
+    /// Gets or sets the components that use this package. Empty when the server
+    /// projection does not expose usage data (REST fallback).
+    /// </summary>
+    public IReadOnlyList<EntityUsage> Usages { get; init; } = [];
 }
 
 /// <summary>
@@ -301,4 +324,10 @@ public record Part
     /// Gets or sets the number of times this part is used in the design.
     /// </summary>
     public int UsageCount { get; init; }
+
+    /// <summary>
+    /// Gets or sets the components that use this part. Empty when the server
+    /// projection does not expose usage data (REST fallback).
+    /// </summary>
+    public IReadOnlyList<EntityUsage> Usages { get; init; } = [];
 }

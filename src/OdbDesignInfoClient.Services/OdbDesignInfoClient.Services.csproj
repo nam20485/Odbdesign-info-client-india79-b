@@ -8,8 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Project Reference -->
+    <!-- Project References -->
     <ProjectReference Include="..\OdbDesignInfoClient.Core\OdbDesignInfoClient.Core.csproj" />
+    <!-- Shared product-model library: compiles the protos (Odb.Lib.Protobuf + Odb.Grpc
+         client stub) and provides the FileModel → components/nets/pins/packages/parts/drill
+         reader. Referenced transitively here rather than regenerating the protos twice. -->
+    <ProjectReference Include="..\OdbDesign.ProductModel\OdbDesign.ProductModel.csproj" />
   </ItemGroup>
 
   <ItemGroup>
@@ -17,58 +21,21 @@
     <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="10.0.8" />
     <PackageReference Include="Refit" Version="10.1.6" />
     <PackageReference Include="Refit.HttpClientFactory" Version="10.1.6" />
-    
-    <!-- gRPC Client -->
+
+    <!-- gRPC runtime (channel creation); the generated client + protobuf types come from
+         the OdbDesign.ProductModel library. -->
     <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
     <PackageReference Include="Google.Protobuf" Version="3.35.0" />
-    <PackageReference Include="Grpc.Tools" Version="2.80.0">
-      <PrivateAssets>all</PrivateAssets>
-      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-    
+
     <!-- Logging -->
     <PackageReference Include="Serilog" Version="4.3.1" />
     <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
-    
+
     <!-- DI -->
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.8" />
-    
-    <!-- JSON Serialization for IPC -->
-    <!--<PackageReference Include="System.Text.Json" Version="10.0.8" />-->
-  </ItemGroup>
-
-  <!-- Proto file compilation for gRPC client generation -->
-  <ItemGroup>
-    <Protobuf Include="..\..\protoc\grpc\service.proto" GrpcServices="Client" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\design.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\featuresfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\symbolname.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\common.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\enums.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\filearchive.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\net.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\package.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\component.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\part.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\pin.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\pinconnection.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\edadatafile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\matrixfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\color.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\stepdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\layerdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\symbolsdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\netlistfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\componentsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\toolsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\stephdrfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\attrlistfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\miscinfofile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\standardfontsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\via.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
   </ItemGroup>
 
 </Project>

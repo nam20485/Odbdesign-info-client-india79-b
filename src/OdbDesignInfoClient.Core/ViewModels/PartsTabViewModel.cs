@@ -72,13 +72,23 @@ public partial class PartsTabViewModel : ViewModelBase
 
             foreach (var part in parts)
             {
-                _allParts.Add(new PartRowViewModel(_navigationService)
+                var row = new PartRowViewModel(_navigationService)
                 {
                     PartNumber = part.PartNumber,
                     Manufacturer = part.Manufacturer,
                     Description = part.Description,
                     UsageCount = part.UsageCount
-                });
+                };
+
+                foreach (var usage in part.Usages)
+                {
+                    row.Usages.Add(new PartUsageRowViewModel(_navigationService)
+                    {
+                        ComponentRefDes = usage.ComponentRefDes
+                    });
+                }
+
+                _allParts.Add(row);
             }
 
             TotalCount = _allParts.Count;
@@ -114,6 +124,19 @@ public partial class PartsTabViewModel : ViewModelBase
         {
             await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
+    }
+
+    /// <summary>
+    /// Clears the filter immediately, bypassing the input debounce.
+    /// </summary>
+    [RelayCommand]
+    private void ClearFilter()
+    {
+        // Setting the property reschedules the debounce; cancel it so the
+        // cleared filter applies right away instead of 300 ms later.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
     }
 
     partial void OnFilterTextChanged(string value)

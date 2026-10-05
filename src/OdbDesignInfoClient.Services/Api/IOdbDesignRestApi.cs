@@ -33,10 +33,30 @@ public interface IOdbDesignRestApi
     Task<ApiResponse<string>> GetLayerNamesAsync(string name, string step, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Gets the design matrix (step columns + layer rows) for a design.
+    /// Provides authoritative stackup data: layer type, physical stack order,
+    /// display color, and drill-span boundaries.
+    /// </summary>
+    [Get("/filemodels/{name}/matrix/matrix")]
+    Task<ApiResponse<string>> GetMatrixAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Gets the list of symbols for a design.
     /// </summary>
     [Get("/filemodels/{name}/symbols")]
     Task<ApiResponse<string>> GetSymbolNamesAsync(string name, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets a step's header file (datum/origin plus step-repeat records).
+    /// </summary>
+    [Get("/filemodels/{name}/steps/{step}/stephdr")]
+    Task<ApiResponse<string>> GetStepHdrAsync(string name, string step, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Gets a step's EDA data file (net records with subnet types, packages, attributes).
+    /// </summary>
+    [Get("/filemodels/{name}/steps/{step}/eda_data")]
+    Task<ApiResponse<string>> GetEdaDataAsync(string name, string step, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Gets the components for a design.

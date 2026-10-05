@@ -7,20 +7,59 @@
              x:Class="OdbDesignInfoClient.Views.PartsTabView"
              x:DataType="vm:PartsTabViewModel">
 
+    <UserControl.Resources>
+        <!-- Part (parent) row cells -->
+        <DataTemplate x:Key="PartNumberCell" x:DataType="vm:PartRowViewModel">
+            <TextBlock Text="{Binding PartNumber}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="PartManufacturerCell" x:DataType="vm:PartRowViewModel">
+            <TextBlock Text="{Binding Manufacturer}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="PartDescriptionCell" x:DataType="vm:PartRowViewModel">
+            <TextBlock Text="{Binding Description}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        </DataTemplate>
+        <DataTemplate x:Key="PartUsageCountCell" x:DataType="vm:PartRowViewModel">
+            <TextBlock Text="{Binding UsageCount}" VerticalAlignment="Center"/>
+        </DataTemplate>
+
+        <!-- Usage (child) row cells -->
+        <DataTemplate x:Key="UsageRefDesCell" x:DataType="vm:PartUsageRowViewModel">
+            <!-- Clickable component RefDes: deep-links to the Components tab via NavigateToComponentCommand -->
+            <Button Command="{Binding NavigateToComponentCommand}"
+                    Background="Transparent"
+                    BorderThickness="0"
+                    Padding="2,0"
+                    Cursor="Hand"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Center">
+                <TextBlock Text="{Binding ComponentRefDes}"
+                           TextTrimming="CharacterEllipsis"
+                           Foreground="#FF0067C0"
+                           TextDecorations="Underline"/>
+            </Button>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <Grid RowDefinitions="Auto,Auto,*,Auto">
         <!-- Filter Bar -->
         <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-            <Grid ColumnDefinitions="Auto,*,Auto">
-                <TextBlock Grid.Column="0" 
-                           Text="Filter:" 
-                           VerticalAlignment="Center" 
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Grid.Column="0"
+                           Text="Filter:"
+                           VerticalAlignment="Center"
                            Margin="0,0,8,0"/>
-                <TextBox Grid.Column="1" 
+                <TextBox Grid.Column="1"
                          Text="{Binding FilterText}"
                          PlaceholderText="Search by Part Number or Description..."
                          MinWidth="300"/>
-                <Button Grid.Column="2" 
-                        Content="Refresh" 
+                <Button Grid.Column="2"
+                        Content="✕"
+                        Command="{Binding ClearFilterCommand}"
+                        ToolTip.Tip="Clear filter"
+                        MinWidth="30"
+                        Margin="4,0,0,0"/>
+                <Button Grid.Column="3"
+                        Content="Refresh"
                         Command="{Binding RefreshCommand}"
                         Margin="8,0,0,0"/>
             </Grid>
@@ -40,35 +79,37 @@
 
 
         <!-- Loading Overlay -->
-        <Border Grid.Row="2" 
+        <Border Grid.Row="2"
                 IsVisible="{Binding IsLoading}"
                 Background="#80000000"
                 ZIndex="100">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
                 <ProgressBar IsIndeterminate="True" Width="200"/>
-                <TextBlock Text="Loading parts..." 
+                <TextBlock Text="Loading parts..."
                            Foreground="White"
                            HorizontalAlignment="Center"
                            Margin="0,8,0,0"/>
             </StackPanel>
         </Border>
 
-        <!-- Data Grid -->
-        <DataGrid Grid.Row="2"
-                  ItemsSource="{Binding Parts}"
-                  SelectedItem="{Binding SelectedPart}"
-                  CanUserResizeColumns="True"
-                  CanUserSortColumns="True"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  GridLinesVisibility="Horizontal">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Part Number" Binding="{Binding PartNumber}" Width="200"/>
-                <DataGridTextColumn Header="Manufacturer" Binding="{Binding Manufacturer}" Width="150"/>
-                <DataGridTextColumn Header="Description" Binding="{Binding Description}" Width="*"/>
-                <DataGridTextColumn Header="Usage Count" Binding="{Binding UsageCount}" Width="100"/>
-            </DataGrid.Columns>
-        </DataGrid>
+        <!-- Hierarchical Tree Grid: Part -> Component Usages (cell templates assigned in code-behind) -->
+        <TreeDataGrid Grid.Row="2"
+                      x:Name="PartGrid"
+                      ItemsSource="{Binding Parts}"
+                      CanUserResizeColumns="True"
+                      CanUserSortColumns="True"
+                      SelectionMode="Row"
+                      SelectionChanged="OnTreeSelectionChanged">
+            <TreeDataGridHierarchicalExpanderColumn Header="Part Number"
+                                                    Width="200"
+                                                    ChildrenBinding="{Binding Usages, DataType={x:Type vm:PartRowViewModel}}"
+                                                    IsExpandedBinding="{Binding IsExpanded, DataType={x:Type vm:PartRowViewModel}}">
+                <TreeDataGridTemplateColumn/>
+            </TreeDataGridHierarchicalExpanderColumn>
+            <TreeDataGridTemplateColumn Header="Manufacturer" Width="150"/>
+            <TreeDataGridTemplateColumn Header="Description" Width="*"/>
+            <TreeDataGridTemplateColumn Header="Usage Count" Width="100"/>
+        </TreeDataGrid>
 
         <!-- Status Bar -->
         <Border Grid.Row="3" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">

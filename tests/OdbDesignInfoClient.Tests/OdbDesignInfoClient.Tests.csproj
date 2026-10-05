@@ -11,6 +11,9 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\OdbDesignInfoClient.Core\OdbDesignInfoClient.Core.csproj" />
     <ProjectReference Include="..\..\src\OdbDesignInfoClient.Services\OdbDesignInfoClient.Services.csproj" />
+    <!-- Direct reference: the ProductModel tests construct Odb.Lib.Protobuf /
+         OdbDesign.ProductModel types directly, not just via Services. -->
+    <ProjectReference Include="..\..\src\OdbDesign.ProductModel\OdbDesign.ProductModel.csproj" />
   </ItemGroup>
 
   <ItemGroup>

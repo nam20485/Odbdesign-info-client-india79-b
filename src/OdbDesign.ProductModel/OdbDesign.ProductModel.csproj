@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>OdbDesign.ProductModel</RootNamespace>
+    <AssemblyName>OdbDesign.ProductModel</AssemblyName>
+    <Description>
+      Shared ODB++ product-model reader. Turns a gRPC Design (file-archive) response into
+      components, nets, pins, packages, parts and drill tools with their relationships, by
+      reading the FileModel (EdaData + Components files) directly — no per-resource REST calls.
+      Portable library intended for reuse across OdbDesign clients (eventually a NuGet package).
+    </Description>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Proto generation + gRPC client live in this shared library so every consumer
+         (info client, and later the 3D client) uses one product-model implementation. -->
+    <PackageReference Include="Google.Protobuf" Version="3.35.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.80.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.8" />
+  </ItemGroup>
+
+  <!-- Proto file compilation for the gRPC client + Odb.Lib.Protobuf data types -->
+  <ItemGroup>
+    <Protobuf Include="..\..\protoc\grpc\service.proto" GrpcServices="Client" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\design.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\featuresfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\symbolname.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\common.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\enums.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\filearchive.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\net.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\package.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\component.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\part.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\pin.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\pinconnection.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\edadatafile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\matrixfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\color.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\stepdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\layerdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\symbolsdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\netlistfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\componentsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\toolsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\stephdrfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\attrlistfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\miscinfofile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\standardfontsfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\via.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,108 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:OdbDesignInfoClient.Core.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="OdbDesignInfoClient.Views.EdaDataTabView"
+             x:DataType="vm:EdaDataTabViewModel">
+
+    <Grid RowDefinitions="Auto,Auto,Auto,*,Auto">
+        <!-- Header -->
+        <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <Grid ColumnDefinitions="*,Auto">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="16" VerticalAlignment="Center">
+                    <TextBlock Text="EDA Data"
+                               FontWeight="Bold"
+                               FontSize="16"
+                               VerticalAlignment="Center"/>
+                    <TextBlock Text="{Binding Units, StringFormat='Units: {0}'}" VerticalAlignment="Center" Opacity="0.7"/>
+                    <TextBlock Text="{Binding Source, StringFormat='Source: {0}'}" VerticalAlignment="Center" Opacity="0.7"/>
+                    <TextBlock Text="{Binding LayerCount, StringFormat='Layers: {0}'}" VerticalAlignment="Center" Opacity="0.7"/>
+                </StackPanel>
+                <Button Grid.Column="1"
+                        Content="Refresh"
+                        Command="{Binding RefreshCommand}"/>
+            </Grid>
+        </Border>
+
+        <!-- Error Banner -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding HasError}"
+                Background="#33F44336"
+                BorderBrush="#FFF44336"
+                BorderThickness="0,0,0,1"
+                Padding="8,4"
+                ZIndex="99">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
+        </Border>
+
+        <!-- Honest Empty State -->
+        <Border Grid.Row="3"
+                IsVisible="{Binding IsEmpty}"
+                Background="{DynamicResource SystemControlBackgroundChromeLowBrush}"
+                Padding="16">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
+                <TextBlock Text="No EDA data"
+                           FontSize="16"
+                           FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+                <TextBlock Text="{Binding EmptyMessage}"
+                           Opacity="0.7"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="520"/>
+                <TextBlock Text="{Binding Path}"
+                           IsVisible="{Binding !IsLoading}"
+                           Opacity="0.5"
+                           FontFamily="Courier New"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="720"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Loading Overlay -->
+        <Border Grid.Row="3"
+                IsVisible="{Binding IsLoading}"
+                Background="#80000000"
+                ZIndex="100">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <ProgressBar IsIndeterminate="True" Width="200"/>
+                <TextBlock Text="Loading EDA data..."
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Data Grid -->
+        <DataGrid Grid.Row="3"
+                  ItemsSource="{Binding Nets}"
+                  SelectedItem="{Binding SelectedNet}"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  GridLinesVisibility="Horizontal">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Net" Binding="{Binding Name}" Width="*"/>
+                <DataGridTextColumn Header="Index" Binding="{Binding Index}" Width="70"/>
+                <DataGridTextColumn Header="Toeprints" Binding="{Binding ToeprintCount}" Width="100"/>
+                <DataGridTextColumn Header="Traces" Binding="{Binding TraceCount}" Width="90"/>
+                <DataGridTextColumn Header="Vias" Binding="{Binding ViaCount}" Width="80"/>
+                <DataGridTextColumn Header="Planes" Binding="{Binding PlaneCount}" Width="80"/>
+                <DataGridTextColumn Header="Attributes" Binding="{Binding AttributeCount}" Width="100"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Status Bar -->
+        <Border Grid.Row="4" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+            <TextBlock>
+                <Run Text="Total: "/>
+                <Run Text="{Binding TotalNets}"/>
+                <Run Text=" net records"/>
+            </TextBlock>
+        </Border>
+    </Grid>
+</UserControl>

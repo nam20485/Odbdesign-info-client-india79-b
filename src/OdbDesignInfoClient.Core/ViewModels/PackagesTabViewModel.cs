@@ -72,14 +72,25 @@ public partial class PackagesTabViewModel : ViewModelBase
 
             foreach (var package in packages)
             {
-                _allPackages.Add(new PackageRowViewModel
+                var row = new PackageRowViewModel
                 {
                     Name = package.Name,
                     Pitch = package.Pitch,
                     PinCount = package.PinCount,
                     Width = package.Width,
                     Height = package.Height
-                });
+                };
+
+                foreach (var usage in package.Usages)
+                {
+                    row.Usages.Add(new PackageUsageRowViewModel(_navigationService)
+                    {
+                        ComponentRefDes = usage.ComponentRefDes,
+                        PartName = usage.PartName ?? string.Empty
+                    });
+                }
+
+                _allPackages.Add(row);
             }
 
             TotalCount = _allPackages.Count;
@@ -115,6 +126,19 @@ public partial class PackagesTabViewModel : ViewModelBase
         {
             await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
+    }
+
+    /// <summary>
+    /// Clears the filter immediately, bypassing the input debounce.
+    /// </summary>
+    [RelayCommand]
+    private void ClearFilter()
+    {
+        // Setting the property reschedules the debounce; cancel it so the
+        // cleared filter applies right away instead of 300 ms later.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
     }
 
     partial void OnFilterTextChanged(string value)

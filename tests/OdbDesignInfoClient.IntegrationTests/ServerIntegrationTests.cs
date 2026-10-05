@@ -1,4 +1,7 @@
 using System.Net;
+using Microsoft.Extensions.Logging.Abstractions;
+using Odb.Grpc;
+using OdbDesign.ProductModel;
 using OdbDesignInfoClient.Core.Models;
 using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Services;
@@ -17,19 +20,31 @@ namespace OdbDesignInfoClient.IntegrationTests;
 /// ODBDESIGN_REST_PASSWORD (or the legacy ODB_AUTH_* names) and the server is
 /// reachable; otherwise each test returns early and reports why.
 /// Override the target with ODBDESIGN_REST_URL (default: the standard deployment).
+/// The design under test is ODBDESIGN_TEST_DESIGN (default: sample_design) and the
+/// step is ODBDESIGN_TEST_STEP (default: step). ONLY public-domain designs may be
+/// referenced here: sample_design and designodb_rigidflex — proprietary designs
+/// (e.g. ap50132476, Turbot, Panel-*) must never appear in tests.
 /// Docker/TestContainers-based contract tests remain a planned addition.
 /// </summary>
 public class ServerIntegrationTests
 {
     private const string DefaultBaseUrl = "https://debian13vm.tail11ba79.ts.net";
+    private const string DefaultGrpcUrl = "http://debian13vm.tail11ba79.ts.net:50051";
 
     private readonly ITestOutputHelper _output;
     private readonly string _baseUrl;
+    private readonly string _grpcUrl;
+    private readonly string _designName;
+    private readonly string _stepName;
 
     public ServerIntegrationTests(ITestOutputHelper output)
     {
         _output = output;
         _baseUrl = Environment.GetEnvironmentVariable("ODBDESIGN_REST_URL") ?? DefaultBaseUrl;
+        _grpcUrl = Environment.GetEnvironmentVariable("ODBDESIGN_GRPC_URL") ?? DefaultGrpcUrl;
+        // Only public-domain designs (sample_design, designodb_rigidflex) may be used.
+        _designName = Environment.GetEnvironmentVariable("ODBDESIGN_TEST_DESIGN") ?? "sample_design";
+        _stepName = Environment.GetEnvironmentVariable("ODBDESIGN_TEST_STEP") ?? "step";
     }
 
     private bool TryCreateClient(out DesignService designService, out string skipReason, bool withCredentials = true)
@@ -100,7 +115,7 @@ public class ServerIntegrationTests
         }
 
         var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
+        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
         var components = await sut.GetComponentsAsync(design!.Id, design.Steps[0]);
@@ -112,7 +127,7 @@ public class ServerIntegrationTests
     }
 
     [Fact]
-    public async Task Live_GetStackup_ParsesLayerListEnvelope()
+    public async Task Live_GetStackup_ReturnsMatrixLayersWithAuthoritativeTypes()
     {
         if (!TryCreateClient(out var sut, out var skip))
         {
@@ -121,16 +136,39 @@ public class ServerIntegrationTests
         }
 
         var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
+        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
-        // The server returns {"layers":[...]} — this validates the envelope parsing live
+        // The server's /matrix/matrix projection gives real layer types, stack order, and
+        // display colors — this validates the authoritative parse end to end.
         var layers = await sut.GetStackupAsync(design!.Id, design.Steps[0]);
 
-        _output.WriteLine($"Design '{design.Id}': {layers.Count} layers ({string.Join(", ", layers.Take(8).Select(l => l.Name))}…)");
+        _output.WriteLine($"Design '{design.Id}': {layers.Count} layers");
         Assert.NotEmpty(layers);
-        Assert.All(layers.Take(5), l => Assert.False(string.IsNullOrEmpty(l.Name)));
+        Assert.All(layers, l => Assert.False(string.IsNullOrEmpty(l.Name)));
+
+        // Types come from the server, not name heuristics: sample_design has Dielectric + Drill rows.
+        Assert.Contains(layers, l => l.Type == "Dielectric");
+        Assert.Contains(layers, l => l.Type == "Drill");
+
+        // Stack order is 1-based and monotonic (top to bottom).
+        Assert.Equal(1, layers.Min(l => l.StackOrder));
+        Assert.True(layers.Max(l => l.StackOrder) >= layers.Count / 2);
+
+        // Dielectric layers carry a real server color (not a type default).
+        var dielectric = layers.First(l => l.Type == "Dielectric");
+        Assert.StartsWith("#", dielectric.ColorHex);
+
+        // A drill layer carries its span boundaries.
+        var drill = layers.First(l => l.Type == "Drill");
+        Assert.False(string.IsNullOrEmpty(drill.StartLayer));
+        Assert.False(string.IsNullOrEmpty(drill.EndLayer));
+
+        _output.WriteLine(
+            $"Top 8: {string.Join(", ", layers.Take(8).Select(l => $"{l.StackOrder}:{l.Name}({l.Type})"))}");
+        _output.WriteLine($"Drill span: {drill.StartLayer} → {drill.EndLayer}; dielectric color {dielectric.ColorHex}");
     }
+
 
     [Fact]
     public async Task Live_GetNets_ReturnsNetsForLoadedDesign()
@@ -142,7 +180,7 @@ public class ServerIntegrationTests
         }
 
         var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == "sample_design") ?? designs.FirstOrDefault();
+        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
         Assert.NotNull(design);
 
         var nets = await sut.GetNetsAsync(design!.Id, design.Steps[0]);
@@ -150,6 +188,118 @@ public class ServerIntegrationTests
         _output.WriteLine($"Design '{design.Id}': {nets.Count} nets");
         Assert.NotEmpty(nets);
         _output.WriteLine($"Sample nets: {string.Join(", ", nets.Take(5).Select(n => n.Name))}");
+    }
+
+    [Fact]
+    public async Task Live_SymbolsEndpoint_ReturnsEnvelopeNames()
+    {
+        if (!TryCreateClient(out var sut, out var skip))
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // New REST route live-check: GET /filemodels/{name}/symbols →
+        // { "symbols": ["drill_symbol1", …] } (names only — no metadata).
+        var symbols = await sut.GetSymbolsAsync(_designName);
+
+        _output.WriteLine($"Design '{_designName}': {symbols.Count} symbols");
+        Assert.NotEmpty(symbols);
+        Assert.All(symbols.Take(5), s => Assert.False(string.IsNullOrEmpty(s.Name)));
+        _output.WriteLine($"Sample symbols: {string.Join(", ", symbols.Take(5).Select(s => s.Name))}");
+    }
+
+    [Fact]
+    public async Task Live_StepSummaries_JoinStepsWithStepHeader()
+    {
+        if (!TryCreateClient(out var sut, out var skip))
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // New REST route live-check: GET /filemodels/{name}/steps/{step}/stephdr →
+        // { "xDatum":0, "yDatum":0, "id":5, "xOrigin":0, "yOrigin":0, … }.
+        var steps = await sut.GetStepSummariesAsync(_designName);
+
+        _output.WriteLine($"Design '{_designName}': {steps.Count} steps");
+        Assert.NotEmpty(steps);
+        Assert.All(steps, s => Assert.False(string.IsNullOrEmpty(s.Name)));
+        Assert.Contains(steps, s => s.Name == _stepName);
+        var target = steps.First(s => s.Name == _stepName);
+        Assert.NotNull(target.Id);
+        _output.WriteLine(
+            $"Step '{target.Name}': id={target.Id} origin=({target.XOrigin},{target.YOrigin}) " +
+            $"datum=({target.XDatum},{target.YDatum}) repeats={target.RepeatCount}");
+    }
+
+    [Fact]
+    public async Task Live_EdaDataEndpoint_ParsesNetSummaries()
+    {
+        if (!TryCreateClient(out var sut, out var skip))
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // New REST route live-check: GET /filemodels/{name}/steps/{step}/eda_data →
+        // the full EdaDataFile JSON (multi-MB); the service summarizes it into
+        // header fields plus per-net subnet counts.
+        var summary = await sut.GetEdaDataSummaryAsync(_designName, _stepName);
+
+        Assert.NotNull(summary);
+        _output.WriteLine(
+            $"eda_data: units={summary!.Units} source='{summary.Source}' " +
+            $"layers={summary.LayerCount} nets={summary.Nets.Count}");
+        Assert.NotEmpty(summary.Units);
+        Assert.NotEmpty(summary.Nets);
+
+        // sample_design carries all four subnet types (verified live: ~2811 toeprints,
+        // ~2103 traces, ~4060 vias, ~41 planes across 644 nets).
+        Assert.Contains(summary.Nets, n => n.ToeprintCount > 0);
+        Assert.Contains(summary.Nets, n => n.ViaCount > 0);
+        var totalVias = summary.Nets.Sum(n => n.ViaCount);
+        _output.WriteLine($"Subnet totals: vias={totalVias}");
+        Assert.True(totalVias > 0, $"expected VIA subnets in {_designName}, got {totalVias}");
+    }
+
+    [Fact]
+    public async Task Live_ViaSummaries_ExposePerNetViaCounts()
+    {
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // Vias ride the gRPC product model: per-net VIA subnet counts projected onto
+        // the builder's net details (additive field, no join changes).
+        var vias = await sut.GetViaSummariesAsync(_designName, _stepName);
+
+        _output.WriteLine($"Design '{_designName}/{_stepName}': vias on {vias.Count} nets, total {vias.Sum(v => v.ViaCount)}");
+        Assert.NotEmpty(vias);
+        Assert.All(vias, v => Assert.True(v.ViaCount > 0));
+        Assert.Contains(vias, v => v.PinCount > 0);
+    }
+
+    [Fact]
+    public async Task Live_NetsIncludeRealViaCounts_FromGrpcProductModel()
+    {
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // The Nets tab ViaCount column is now fed from the EDA net records (it was
+        // hard-coded 0 before): at least one net of sample_design must report vias.
+        var nets = await sut.GetNetsAsync(_designName, _stepName);
+
+        var withVias = nets.Count(n => n.ViaCount > 0);
+        _output.WriteLine($"Nets with vias: {withVias} of {nets.Count}");
+        Assert.True(withVias > 0, $"expected nets with real via counts, got {withVias} of {nets.Count}");
     }
 
     [Fact]
@@ -164,9 +314,117 @@ public class ServerIntegrationTests
         // Without credentials the server returns 401, which the service
         // must translate into a clear UnauthorizedAccessException
         var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => sut.GetComponentsAsync("sample_design", "step"));
+            () => sut.GetComponentsAsync(_designName, _stepName));
 
         _output.WriteLine($"Received expected auth error: {ex.Message}");
+    }
+
+    [Fact]
+    public async Task Live_GrpcProductModel_PopulatesComponentsPackagesPartsAndDrills()
+    {
+        var (sut, connection, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // One gRPC GetDesign (normalized lists pruned) → the shared ProductModelReader
+        // reconstructs components/nets/pins/packages/parts/drill from the FileModel.
+        var comps = await sut.GetComponentsAsync(_designName, _stepName);
+        var pkgs = await sut.GetPackagesAsync(_designName, _stepName);
+        var parts = await sut.GetPartsAsync(_designName, _stepName);
+        var drills = await sut.GetDrillToolsAsync(_designName, _stepName);
+
+        _output.WriteLine(
+            $"gRPC product model: components={comps.Count} packages={pkgs.Count} parts={parts.Count} drills={drills.Count}");
+
+        // sample_design reference numbers (thresholds, not exact): ~813 components,
+        // ~644 nets, ~71 packages, ~143 parts, ~17 drill tools.
+        Assert.True(comps.Count > 700, $"expected the full component list (~813), got {comps.Count}");
+        // Real placement comes from the FileModel (the REST projection has X/Y = 0).
+        Assert.Contains(comps, c => c.X != 0 || c.Y != 0);
+        Assert.Contains(comps, c => c.Pins.Count > 0);
+        Assert.True(pkgs.Count > 50, $"expected ~71 packages, got {pkgs.Count}");
+        Assert.True(parts.Count > 100, $"expected ~143 parts, got {parts.Count}");
+        Assert.Contains(parts, p => p.UsageCount > 0);
+        Assert.True(drills.Count > 10, $"expected ~17 drill tools, got {drills.Count}");
+
+        var sample = comps.First(c => c.Pins.Count > 0);
+        _output.WriteLine(
+            $"sample component {sample.RefDes}: part={sample.PartName} pkg={sample.Package} " +
+            $"x={sample.X:F3} y={sample.Y:F3} rot={sample.Rotation} pins={sample.Pins.Count}");
+
+        // Prove the (side, per-side ordinal) re-key against the live server: run
+        // the shared reader on the raw file-archive Design — the exact object
+        // DesignService reads — and check per-component net summaries are sane.
+        // With the old (side, Comp.Id = 0) keying, every component on a side
+        // merged into one entry and a 1-pin component reported ~610 of the 644
+        // nets as its own summary list. sample_design's true maximum is ~170
+        // nets (U22, a 208-pin part); genuine connectivity never exceeds the
+        // component's own pin count.
+        var grpcClient = connection!.GrpcClient;
+        Assert.NotNull(grpcClient);
+        var design = await grpcClient!.GetDesignAsync(new GetDesignRequest { DesignName = _designName });
+        var model = new ProductModelReader(NullLogger<ProductModelReader>.Instance).Read(design, _stepName);
+
+        var maxNetsPerComponent = model.Components.Count == 0 ? 0 : model.Components.Max(c => c.Nets.Count);
+        var lowPinMinNets = model.Components.Where(c => c.Pins.Count <= 2).Select(c => c.Nets.Count).DefaultIfEmpty(0).Min();
+        _output.WriteLine(
+            $"reader join: components={model.Components.Count} nets={model.Nets.Count} " +
+            $"maxNetsPerComponent={maxNetsPerComponent} lowPinMinNets={lowPinMinNets}");
+
+        Assert.Equal(comps.Count, model.Components.Count);
+        Assert.True(model.Nets.Count > 600, $"expected ~644 nets, got {model.Nets.Count}");
+        Assert.True(
+            maxNetsPerComponent < model.Nets.Count / 2,
+            $"per-component nets merged again: max {maxNetsPerComponent} of {model.Nets.Count} nets");
+        // A merged entry reported far more nets than its pin count; genuine
+        // connectivity cannot (each distinct net needs at least one pin).
+        Assert.All(
+            model.Components,
+            c => Assert.True(c.Nets.Count <= c.Pins.Count, $"{c.Name}: {c.Nets.Count} nets > {c.Pins.Count} pins"));
+        Assert.True(
+            model.Components.Any(c => c.Pins.Count <= 2 && c.Nets.Count <= 2),
+            "expected at least one low-pin component with a small net summary list");
+    }
+
+    /// <summary>
+    /// Builds a DesignService backed by a real gRPC connection (REST health check + gRPC
+    /// channel), or returns a skip reason when credentials/gRPC are unavailable.
+    /// </summary>
+    private async Task<(DesignService? Service, ConnectionService? Connection, string Skip)> TryCreateGrpcClientAsync()
+    {
+        var auth = new BasicAuthService();
+        if (!auth.IsAuthenticated)
+        {
+            return (null, null, "No credentials found (set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD).");
+        }
+
+        var handler = new AuthHeaderHandler(auth) { InnerHandler = new SocketsHttpHandler() };
+        var httpClient = new HttpClient(handler)
+        {
+            BaseAddress = new Uri(_baseUrl),
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        var restApi = RestService.For<IOdbDesignRestApi>(httpClient);
+
+        var connection = new ConnectionService(restApi, auth);
+        var config = new ServerConnectionConfig
+        {
+            Host = new Uri(_baseUrl).Host,
+            RestUrlOverride = _baseUrl,
+            GrpcUrlOverride = _grpcUrl,
+            GrpcUseTls = _grpcUrl.StartsWith("https", StringComparison.OrdinalIgnoreCase),
+        };
+
+        var connected = await connection.ConnectAsync(config);
+        if (!connected || !connection.IsGrpcAvailable)
+        {
+            return (null, null, $"gRPC unavailable (connected={connected}, grpc={connection.IsGrpcAvailable}) at {_grpcUrl}");
+        }
+
+        return (new DesignService(connection, restApi), connection, string.Empty);
     }
 
     /// <summary>

@@ -73,6 +73,23 @@ public class DesignServiceTests
         ]
         """;
 
+    /// <summary>
+    /// Sample design-matrix (stackup) JSON, mirroring the live server projection shape:
+    /// sparse optional fields (type absent = Signal, drill span, real color) per layer.
+    /// </summary>
+    private const string SampleMatrixJson = """
+        {
+          "steps": [{ "column": 1, "id": 19, "name": "STEP" }],
+          "layers": [
+            { "row": 1, "type": "Component", "name": "COMP_+_TOP", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } },
+            { "row": 2, "type": "SolderMask", "name": "SOLDERMASK-TOP", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } },
+            { "row": 3, "name": "LAYER-1", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } },
+            { "row": 4, "type": "Dielectric", "name": "DIELECTRIC1", "color": { "red": 99, "green": 99, "blue": 55, "noPreference": false } },
+            { "row": 5, "type": "Drill", "name": "DRILL", "startName": "LAYER-1", "endName": "LAYER-8", "color": { "red": 0, "green": 0, "blue": 0, "noPreference": true } }
+          ]
+        }
+        """;
+
     public DesignServiceTests()
     {
         _mockConnectionService = new Mock<IConnectionService>();
@@ -434,9 +451,39 @@ public class DesignServiceTests
     }
 
     [Fact]
-    public async Task GetStackupAsync_ReturnsLayers_WhenServerReturnsLayerNames()
+    public async Task GetStackupAsync_ParsesMatrixLayers_WithAuthoritativeTypeColorAndStackOrder()
     {
         // Arrange
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleMatrixJson));
+
+        // Act
+        var result = await _sut.GetStackupAsync("design-1", "pcb");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(5, result.Count);
+        Assert.Equal("COMP_+_TOP", result[0].Name);
+        Assert.Equal("Component", result[0].Type);
+        // Absent "type" field means a Signal layer (server omits the default enum).
+        Assert.Equal("Signal", result[2].Type);
+        // Real server color when set; type-based default when "noPreference".
+        Assert.Equal("#636337", result[3].ColorHex);
+        Assert.Equal("#2196F3", result[1].ColorHex);
+        // Drill span carried through.
+        Assert.Equal("LAYER-1", result[4].StartLayer);
+        Assert.Equal("LAYER-8", result[4].EndLayer);
+        // Physical stack order preserved.
+        Assert.Equal(1, result[0].StackOrder);
+        Assert.Equal(5, result[4].StackOrder);
+    }
+
+    [Fact]
+    public async Task GetStackupAsync_FallsBackToLayerNames_WhenMatrixUnavailable()
+    {
+        // Arrange - the matrix route fails but the layer-name list is available
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
         var layerNamesJson = """["top_copper", "dielectric_1", "bottom_copper"]""";
         _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSuccessResponse(layerNamesJson));
@@ -444,16 +491,21 @@ public class DesignServiceTests
         // Act
         var result = await _sut.GetStackupAsync("design-1", "pcb");
 
-        // Assert
+        // Assert - minimal stackup still built from names, no fabricated thickness/material
         Assert.NotNull(result);
         Assert.Equal(3, result.Count);
         Assert.Equal("top_copper", result[0].Name);
+        Assert.Equal(1, result[0].StackOrder);
+        Assert.Null(result[0].Thickness);
+        Assert.Null(result[0].Material);
     }
 
     [Fact]
-    public async Task GetStackupAsync_ParsesEnvelopeFormat_WhenServerReturnsLayersObject()
+    public async Task GetStackupAsync_ParsesEnvelopeFormat_InLayerNameFallback()
     {
-        // Arrange - the server wraps the layer list in a "layers" envelope
+        // Arrange - the layer-name list arrives wrapped in a "layers" envelope
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
         var envelopeJson = """{"layers":["board-outline.doc","comp_+_top","dielectric1","layer-1","soldermask-top"]}""";
         _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "step", It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateSuccessResponse(envelopeJson));
@@ -467,6 +519,7 @@ public class DesignServiceTests
         Assert.Equal("board-outline.doc", result[0].Name);
         Assert.Equal("soldermask-top", result[4].Name);
     }
+
 
     [Fact]
     public async Task GetDesignsAsync_ReturnsEmptyList_WhenServerReturnsNoContent()
@@ -529,9 +582,8 @@ public class DesignServiceTests
     public async Task GetStackupAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
     {
         // Arrange
-        var layerNamesJson = """["top_copper", "bottom_copper"]""";
-        _mockRestApi.Setup(x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateSuccessResponse(layerNamesJson));
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(SampleMatrixJson));
 
         // Act
         _ = await _sut.GetStackupAsync("design-1", "pcb");
@@ -539,9 +591,10 @@ public class DesignServiceTests
 
         // Assert
         _mockRestApi.Verify(
-            x => x.GetLayerNamesAsync("design-1", "pcb", It.IsAny<CancellationToken>()),
+            x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
 
     [Fact]
     public async Task ClearCache_ForcesRefetchOnNextCall()
@@ -578,6 +631,304 @@ public class DesignServiceTests
         _mockRestApi.Verify(
             x => x.GetComponentsAsync("design-1", It.IsAny<CancellationToken>()),
             Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task GetSymbolsAsync_ParsesEnvelopeFormat_FromLiveServerShape()
+    {
+        // Arrange - the observed live shape: { "symbols": ["drill_symbol1", ...] }
+        var response = CreateSuccessResponse("""{"symbols":["drill_symbol1","drill_symbol1+1","r10"]}""");
+        _mockRestApi
+            .Setup(x => x.GetSymbolNamesAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act
+        var result = await _sut.GetSymbolsAsync("design-1");
+
+        // Assert
+        Assert.Equal(3, result.Count);
+        Assert.Equal("drill_symbol1", result[0].Name);
+        Assert.Equal("r10", result[2].Name);
+    }
+
+    [Fact]
+    public async Task GetSymbolsAsync_ParsesBareArray_WhenServerReturnsPlainList()
+    {
+        // Arrange - tolerate a bare string array as well
+        var response = CreateSuccessResponse("""["r10","rect20x30"]""");
+        _mockRestApi
+            .Setup(x => x.GetSymbolNamesAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+
+        // Act
+        var result = await _sut.GetSymbolsAsync("design-1");
+
+        // Assert
+        Assert.Equal(2, result.Count);
+        Assert.Equal("rect20x30", result[1].Name);
+    }
+
+    [Fact]
+    public async Task GetSymbolsAsync_ReturnsEmptyList_WhenDesignNotFound()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetSymbolNamesAsync("unknown-design", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
+
+        // Act
+        var result = await _sut.GetSymbolsAsync("unknown-design");
+
+        // Assert
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetSymbolsAsync_ThrowsUnauthorizedAccessException_OnAuthFailure()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetSymbolNamesAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.Unauthorized));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _sut.GetSymbolsAsync("design-1"));
+    }
+
+    [Fact]
+    public async Task GetSymbolsAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetSymbolNamesAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse("""{"symbols":["r10"]}"""));
+
+        // Act
+        _ = await _sut.GetSymbolsAsync("design-1");
+        _ = await _sut.GetSymbolsAsync("design-1");
+
+        // Assert
+        _mockRestApi.Verify(
+            x => x.GetSymbolNamesAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetStepSummariesAsync_JoinsStepsWithHeaderMetadata()
+    {
+        // Arrange - steps list plus per-step stephdr projections (live shapes)
+        _mockRestApi
+            .Setup(x => x.GetStepsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse("""["pcb","panel"]"""));
+        _mockRestApi
+            .Setup(x => x.GetStepHdrAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(
+                """{"xDatum":0,"yDatum":0,"id":5,"xOrigin":1.5,"yOrigin":-2.5,"topActive":0}"""));
+        _mockRestApi
+            .Setup(x => x.GetStepHdrAsync("design-1", "panel", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
+
+        // Act
+        var result = await _sut.GetStepSummariesAsync("design-1");
+
+        // Assert
+        Assert.Equal(2, result.Count);
+
+        var pcb = result[0];
+        Assert.Equal("pcb", pcb.Name);
+        Assert.Equal(5, pcb.Id);
+        Assert.Equal(1.5, pcb.XOrigin);
+        Assert.Equal(-2.5, pcb.YOrigin);
+        Assert.Equal(0, pcb.XDatum);
+        Assert.Equal(0, pcb.RepeatCount);
+
+        // A missing stephdr degrades the row to a bare step name, never fails the tab
+        var panel = result[1];
+        Assert.Equal("panel", panel.Name);
+        Assert.Null(panel.Id);
+        Assert.Null(panel.XOrigin);
+        Assert.Equal(0, panel.RepeatCount);
+    }
+
+    [Fact]
+    public async Task GetStepSummariesAsync_ParsesStepRepeatRecords()
+    {
+        // Arrange - a panelized step declares repeat records in its header
+        _mockRestApi
+            .Setup(x => x.GetStepsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse("""["panel"]"""));
+        _mockRestApi
+            .Setup(x => x.GetStepHdrAsync("design-1", "panel", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(
+                """{"id":9,"stepRepeatRecords":[{"name":"pcb","nx":2,"ny":3},{"name":"pcb","nx":1,"ny":1}]}"""));
+
+        // Act
+        var result = await _sut.GetStepSummariesAsync("design-1");
+
+        // Assert
+        Assert.Single(result);
+        Assert.Equal(9, result[0].Id);
+        Assert.Equal(2, result[0].RepeatCount);
+    }
+
+    [Fact]
+    public async Task GetStepSummariesAsync_ReturnsEmptyList_WhenDesignNotFound()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetStepsAsync("unknown-design", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
+
+        // Act
+        var result = await _sut.GetStepSummariesAsync("unknown-design");
+
+        // Assert
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetStepSummariesAsync_SecondCallWithinCacheWindow_SkipsHttpRequests()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetStepsAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse("""["pcb"]"""));
+        _mockRestApi
+            .Setup(x => x.GetStepHdrAsync("design-1", "pcb", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse("""{"id":5}"""));
+
+        // Act
+        _ = await _sut.GetStepSummariesAsync("design-1");
+        _ = await _sut.GetStepSummariesAsync("design-1");
+
+        // Assert
+        _mockRestApi.Verify(
+            x => x.GetStepsAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockRestApi.Verify(
+            x => x.GetStepHdrAsync("design-1", "pcb", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task GetViaSummariesAsync_ReturnsEmpty_WithoutGrpcProductModel()
+    {
+        // Arrange - gRPC unavailable (REST nets expose no via information)
+
+        // Act
+        var result = await _sut.GetViaSummariesAsync("design-1", "pcb");
+
+        // Assert - honestly empty rather than fabricated counts
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task GetEdaDataSummaryAsync_ParsesHeaderAndPerNetSubnetCounts()
+    {
+        // Arrange - a trimmed eda_data payload with the live server's shape
+        var edaJson = """
+            {
+              "path": "/OdbDesign/designs/d/d/steps/step/eda/data",
+              "units": "INCH",
+              "source": "Mentor PowerPCB file",
+              "layerNames": ["layer-1", "drill", "layer-8"],
+              "netRecords": [
+                {
+                  "name": "GND",
+                  "index": 0,
+                  "subnetRecords": [
+                    { "type": "TOEPRINT", "side": "Top", "componentNumber": 0 },
+                    { "type": "VIA" },
+                    { "type": "VIA" },
+                    { "type": "PLANE" },
+                    { "type": "TRACE" }
+                  ],
+                  "propertyRecords": [{ "name": ".net_class", "value": "PWR" }]
+                },
+                {
+                  "index": 7,
+                  "subnetRecords": [
+                    { "type": "TOEPRINT", "side": "Top", "componentNumber": 4 }
+                  ],
+                  "attributeLookupTable": { "0": "clock", "1": "" }
+                }
+              ]
+            }
+            """;
+        _mockRestApi
+            .Setup(x => x.GetEdaDataAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(edaJson));
+
+        // Act
+        var result = await _sut.GetEdaDataSummaryAsync("design-1", "step");
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal("INCH", result!.Units);
+        Assert.Equal("Mentor PowerPCB file", result.Source);
+        Assert.Equal(3, result.LayerCount);
+        Assert.Equal(2, result.Nets.Count);
+
+        var gnd = result.Nets[0];
+        Assert.Equal("GND", gnd.Name);
+        Assert.Equal(1, gnd.ToeprintCount);
+        Assert.Equal(2, gnd.ViaCount);
+        Assert.Equal(1, gnd.PlaneCount);
+        Assert.Equal(1, gnd.TraceCount);
+        Assert.Equal(1, gnd.AttributeCount);
+
+        // Unnamed nets display as "#Index"; attribute-lookup entries count as attributes
+        var unnamed = result.Nets[1];
+        Assert.Equal("#7", unnamed.Name);
+        Assert.Equal(1, unnamed.ToeprintCount);
+        Assert.Equal(2, unnamed.AttributeCount);
+    }
+
+    [Fact]
+    public async Task GetEdaDataSummaryAsync_ReturnsNull_WhenNoEdaDataExists()
+    {
+        // Arrange - the step has no eda/data file on the server
+        _mockRestApi
+            .Setup(x => x.GetEdaDataAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.NotFound));
+
+        // Act
+        var result = await _sut.GetEdaDataSummaryAsync("design-1", "step");
+
+        // Assert - null drives the tab's honest empty state
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetEdaDataSummaryAsync_ThrowsUnauthorizedAccessException_OnAuthFailure()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetEdaDataAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.Unauthorized));
+
+        // Act & Assert
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            () => _sut.GetEdaDataSummaryAsync("design-1", "step"));
+    }
+
+    [Fact]
+    public async Task GetEdaDataSummaryAsync_SecondCallWithinCacheWindow_SkipsHttpRequest()
+    {
+        // Arrange
+        _mockRestApi
+            .Setup(x => x.GetEdaDataAsync("design-1", "step", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse("""{"units":"INCH","netRecords":[]}"""));
+
+        // Act
+        _ = await _sut.GetEdaDataSummaryAsync("design-1", "step");
+        _ = await _sut.GetEdaDataSummaryAsync("design-1", "step");
+
+        // Assert
+        _mockRestApi.Verify(
+            x => x.GetEdaDataAsync("design-1", "step", It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     #region Test Helpers

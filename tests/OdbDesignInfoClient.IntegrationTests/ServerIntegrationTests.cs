@@ -83,7 +83,7 @@ public class ServerIntegrationTests
             Timeout = TimeSpan.FromSeconds(30),
         };
         var restApi = RestService.For<IOdbDesignRestApi>(httpClient);
-        return new DesignService(new NoGrpcConnectionService(), restApi);
+        return new DesignService(new UnavailableGrpcClient(), restApi);
     }
 
     [Fact]
@@ -108,19 +108,18 @@ public class ServerIntegrationTests
     [Fact]
     public async Task Live_GetComponents_ReturnsComponentsForLoadedDesign()
     {
-        if (!TryCreateClient(out var sut, out var skip))
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
         {
             _output.WriteLine($"SKIPPED: {skip}");
             return;
         }
 
-        var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
-        Assert.NotNull(design);
+        // Components ride the gRPC product model (the REST projection was deleted
+        // with the F3 transport switch).
+        var components = await sut.GetComponentsAsync(_designName, _stepName);
 
-        var components = await sut.GetComponentsAsync(design!.Id, design.Steps[0]);
-
-        _output.WriteLine($"Design '{design.Id}': {components.Count} components");
+        _output.WriteLine($"Design '{_designName}': components={components.Count} components");
         Assert.NotEmpty(components);
         Assert.All(components.Take(5), c => Assert.False(string.IsNullOrEmpty(c.RefDes)));
         _output.WriteLine($"Sample RefDes: {string.Join(", ", components.Take(5).Select(c => c.RefDes))}");
@@ -129,21 +128,18 @@ public class ServerIntegrationTests
     [Fact]
     public async Task Live_GetStackup_ReturnsMatrixLayersWithAuthoritativeTypes()
     {
-        if (!TryCreateClient(out var sut, out var skip))
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
         {
             _output.WriteLine($"SKIPPED: {skip}");
             return;
         }
 
-        var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
-        Assert.NotNull(design);
+        // The design matrix rides the gRPC file archive (FileArchive.matrixFile) —
+        // real layer types, stack order, and display colors end to end.
+        var layers = await sut.GetStackupAsync(_designName, _stepName);
 
-        // The server's /matrix/matrix projection gives real layer types, stack order, and
-        // display colors — this validates the authoritative parse end to end.
-        var layers = await sut.GetStackupAsync(design!.Id, design.Steps[0]);
-
-        _output.WriteLine($"Design '{design.Id}': {layers.Count} layers");
+        _output.WriteLine($"Design '{_designName}': {layers.Count} layers");
         Assert.NotEmpty(layers);
         Assert.All(layers, l => Assert.False(string.IsNullOrEmpty(l.Name)));
 
@@ -173,34 +169,33 @@ public class ServerIntegrationTests
     [Fact]
     public async Task Live_GetNets_ReturnsNetsForLoadedDesign()
     {
-        if (!TryCreateClient(out var sut, out var skip))
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
         {
             _output.WriteLine($"SKIPPED: {skip}");
             return;
         }
 
-        var designs = await sut.GetDesignsAsync();
-        var design = designs.FirstOrDefault(d => d.Name == _designName) ?? designs.FirstOrDefault();
-        Assert.NotNull(design);
+        var nets = await sut.GetNetsAsync(_designName, _stepName);
 
-        var nets = await sut.GetNetsAsync(design!.Id, design.Steps[0]);
-
-        _output.WriteLine($"Design '{design.Id}': {nets.Count} nets");
+        _output.WriteLine($"Design '{_designName}': {nets.Count} nets");
         Assert.NotEmpty(nets);
         _output.WriteLine($"Sample nets: {string.Join(", ", nets.Take(5).Select(n => n.Name))}");
     }
 
     [Fact]
-    public async Task Live_SymbolsEndpoint_ReturnsEnvelopeNames()
+    public async Task Live_Symbols_ListSymbolDirectoryNamesFromFileArchive()
     {
-        if (!TryCreateClient(out var sut, out var skip))
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
         {
             _output.WriteLine($"SKIPPED: {skip}");
             return;
         }
 
-        // New REST route live-check: GET /filemodels/{name}/symbols →
-        // { "symbols": ["drill_symbol1", …] } (names only — no metadata).
+        // The symbols library is design-wide: its names are the keys of the file
+        // archive's symbolsDirectoriesByName map (the former REST route listed the
+        // same keys).
         var symbols = await sut.GetSymbolsAsync(_designName);
 
         _output.WriteLine($"Design '{_designName}': {symbols.Count} symbols");
@@ -212,14 +207,15 @@ public class ServerIntegrationTests
     [Fact]
     public async Task Live_StepSummaries_JoinStepsWithStepHeader()
     {
-        if (!TryCreateClient(out var sut, out var skip))
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
         {
             _output.WriteLine($"SKIPPED: {skip}");
             return;
         }
 
-        // New REST route live-check: GET /filemodels/{name}/steps/{step}/stephdr →
-        // { "xDatum":0, "yDatum":0, "id":5, "xOrigin":0, "yOrigin":0, … }.
+        // Steps and their stephdr files both ride the gRPC file archive
+        // (StepDirectory.stephdrfile: xDatum/yDatum/id/xOrigin/yOrigin/repeats).
         var steps = await sut.GetStepSummariesAsync(_designName);
 
         _output.WriteLine($"Design '{_designName}': {steps.Count} steps");
@@ -234,7 +230,7 @@ public class ServerIntegrationTests
     }
 
     [Fact]
-    public async Task Live_EdaDataEndpoint_ParsesNetSummaries()
+    public async Task Live_StepSummaries_DegradeToBareNames_WithoutGrpc()
     {
         if (!TryCreateClient(out var sut, out var skip))
         {
@@ -242,9 +238,33 @@ public class ServerIntegrationTests
             return;
         }
 
-        // New REST route live-check: GET /filemodels/{name}/steps/{step}/eda_data →
-        // the full EdaDataFile JSON (multi-MB); the service summarizes it into
-        // header fields plus per-net subnet counts.
+        // With gRPC unavailable the REST discovery steps route still names the
+        // steps; the stephdr projection is gone with the REST read path, so rows
+        // degrade to bare names instead of failing the tab.
+        var steps = await sut.GetStepSummariesAsync(_designName);
+
+        _output.WriteLine($"Design '{_designName}' (no gRPC): {steps.Count} step names");
+        Assert.NotEmpty(steps);
+        Assert.All(steps, s =>
+        {
+            Assert.False(string.IsNullOrEmpty(s.Name));
+            Assert.Null(s.Id);
+        });
+    }
+
+    [Fact]
+    public async Task Live_EdaDataEndpoint_ParsesNetSummaries()
+    {
+        var (sut, _, skip) = await TryCreateGrpcClientAsync();
+        if (sut is null)
+        {
+            _output.WriteLine($"SKIPPED: {skip}");
+            return;
+        }
+
+        // The step's EDA data file rides the gRPC file archive
+        // (StepDirectory.edadatafile); the service summarizes it into header fields
+        // plus per-net subnet counts.
         var summary = await sut.GetEdaDataSummaryAsync(_designName, _stepName);
 
         Assert.NotNull(summary);
@@ -326,9 +346,11 @@ public class ServerIntegrationTests
         }
 
         // Without credentials the server returns 401, which the service
-        // must translate into a clear UnauthorizedAccessException
+        // must translate into a clear UnauthorizedAccessException. The contract
+        // lives on the remaining REST reads (discovery): with gRPC unavailable
+        // the step summaries degrade to the REST steps route.
         var ex2 = await Assert.ThrowsAsync<UnauthorizedAccessException>(
-            () => sut.GetComponentsAsync(_designName, _stepName));
+            () => sut.GetStepSummariesAsync(_designName));
 
         _output.WriteLine($"Received expected auth error: {ex2.Message}");
     }
@@ -442,29 +464,17 @@ public class ServerIntegrationTests
     }
 
     /// <summary>
-    /// Minimal IConnectionService stand-in that reports gRPC unavailable,
-    /// forcing the REST code path (what these tests exercise).
+    /// Minimal <see cref="IOdbDesignGrpcClient"/> stand-in that reports gRPC
+    /// unavailable, forcing the REST discovery path (what these tests exercise).
     /// </summary>
-    private sealed class NoGrpcConnectionService : IConnectionService
+    private sealed class UnavailableGrpcClient : IOdbDesignGrpcClient
     {
-        public ConnectionState State => ConnectionState.Connected;
+        public bool IsAvailable => false;
 
-        public ServerConnectionConfig Configuration { get; } = new();
-
-        public bool IsGrpcAvailable => false;
-
-        public event EventHandler<ConnectionState>? StateChanged
-        {
-            add { }
-            remove { }
-        }
-
-        public Task<bool> ConnectAsync(ServerConnectionConfig config, CancellationToken cancellationToken = default)
-            => Task.FromResult(true);
-
-        public Task DisconnectAsync() => Task.CompletedTask;
-
-        public Task<bool> CheckHealthAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<Odb.Lib.Protobuf.ProductModel.Design?> GetDesignAsync(
+            string designName,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<Odb.Lib.Protobuf.ProductModel.Design?>(null);
     }
 
     /// <summary>

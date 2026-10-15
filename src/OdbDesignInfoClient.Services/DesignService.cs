@@ -59,6 +59,7 @@ public class DesignService : IDesignService
     private readonly ConcurrentDictionary<string, IReadOnlyList<Net>> _netCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Layer>> _stackupCache = new();
     private readonly ConcurrentDictionary<string, DesignProductModel> _productModelCache = new();
+    private readonly ConcurrentDictionary<string, Lazy<Task<DesignProductModel?>>> _productModelFetches = new();
     private readonly ConcurrentDictionary<string, ProtoDesign> _designArchiveCache = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<ProtoDesign?>>> _designArchiveFetches = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<StepSummary>> _stepSummaryCache = new();
@@ -435,6 +436,11 @@ public class DesignService : IDesignService
     /// file archive. Returns null when the archive is unavailable; an empty model is
     /// returned as-is (the transport owns no richer projection to fall back to).
     /// </summary>
+    /// <remarks>
+    /// The derive (a full FileModel parse) is single-flighted per (design, step):
+    /// a refresh fans out over every product-model-backed tab at once and each
+    /// would otherwise run the same parse for the same key.
+    /// </remarks>
     private async Task<DesignProductModel?> GetProductModelAsync(string designId, string stepName)
     {
         var cacheKey = $"{designId}:{stepName}";
@@ -443,6 +449,27 @@ public class DesignService : IDesignService
             return cached;
         }
 
+        var fetch = _productModelFetches.GetOrAdd(
+            cacheKey,
+            _ => new Lazy<Task<DesignProductModel?>>(
+                () => BuildProductModelAsync(designId, stepName, cacheKey)));
+        try
+        {
+            return await fetch.Value.ConfigureAwait(false);
+        }
+        finally
+        {
+            // Drop the completed entry (success or failure) so a later call after
+            // the TTL expiry re-derives instead of awaiting a terminal task.
+            _productModelFetches.TryRemove(KeyValuePair.Create(cacheKey, fetch));
+        }
+    }
+
+    private async Task<DesignProductModel?> BuildProductModelAsync(
+        string designId,
+        string stepName,
+        string cacheKey)
+    {
         var generation = Volatile.Read(ref _cacheGeneration);
         var archive = await GetDesignArchiveAsync(designId);
         if (archive is null)
@@ -981,12 +1008,9 @@ public class DesignService : IDesignService
             .Select(name => MapStepSummary(name, stepHeader: null))
             .ToList();
 
-        if (Volatile.Read(ref _cacheGeneration) == generation)
-        {
-            _stepSummaryCache[designId] = degraded;
-            _stepSummaryCacheRefresh = DateTime.Now;
-        }
-
+        // Degraded rows stay uncached (matching the components/nets policy): once
+        // gRPC recovers, the next load serves real headers instead of header-less
+        // rows until the TTL expires.
         return degraded;
     }
 
@@ -1210,6 +1234,7 @@ public class DesignService : IDesignService
         // (on CancellationToken.None) fails its generation check and writes nothing.
         Interlocked.Increment(ref _cacheGeneration);
         _designArchiveFetches.Clear();
+        _productModelFetches.Clear();
 
         _designCache.Clear();
         _componentCache.Clear();

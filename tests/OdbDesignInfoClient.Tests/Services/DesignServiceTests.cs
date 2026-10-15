@@ -259,13 +259,19 @@ public class DesignServiceTests
             .ReturnsAsync(CreateSuccessResponse("""["pcb","panel"]"""));
 
         // Act
-        var result = await _sut.GetStepSummariesAsync("design-1");
+        var first = await _sut.GetStepSummariesAsync("design-1");
+        var second = await _sut.GetStepSummariesAsync("design-1");
 
-        // Assert
-        Assert.Equal(2, result.Count);
-        Assert.Equal("pcb", result[0].Name);
-        Assert.Null(result[0].Id);
-        Assert.Null(result[0].XOrigin);
+        // Assert - degraded rows are not cached: the next load re-queries so the
+        // tab recovers real headers as soon as gRPC comes back
+        Assert.Equal(2, first.Count);
+        Assert.Equal("pcb", first[0].Name);
+        Assert.Null(first[0].Id);
+        Assert.Null(first[0].XOrigin);
+        Assert.Equal(first.Count, second.Count);
+        _mockRestApi.Verify(
+            x => x.GetStepsAsync("design-1", It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
     }
 
     [Fact]

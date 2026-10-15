@@ -88,8 +88,12 @@ public static class ServiceCollectionExtensions
                         });
             });
 
-        // Register core services as singletons (they manage connection state)
-        services.AddSingleton<IConnectionService, ConnectionService>();
+        // Register core services as singletons (they manage connection state).
+        // ConnectionService is registered as itself plus both its service faces so
+        // IConnectionService consumers and the gRPC read seam share one instance.
+        services.AddSingleton<ConnectionService>();
+        services.AddSingleton<IConnectionService>(sp => sp.GetRequiredService<ConnectionService>());
+        services.AddSingleton<IOdbDesignGrpcClient>(sp => sp.GetRequiredService<ConnectionService>());
         services.AddSingleton<IDesignService, DesignService>();
         services.AddSingleton<INavigationService, NavigationService>();
         services.AddSingleton<ICrossProbeService, CrossProbeService>();

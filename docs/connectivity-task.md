@@ -6,33 +6,34 @@ Your `ComponentDetailBuilder.cs` keying is already correct — `ResolveComponent
 `uint Index` with no `byId` path (`:429-435`), and `byName` uses `StringComparer.Ordinal`
 (`:158`). Nothing to fix there. Two items remain.
 
-## Part A — REST → gRPC for design reads (largest item, own PR)
+## Part A — REST → gRPC for design reads (largest item, own PR) — DONE (F3)
 
-The server's derived connectivity contract ships **gRPC only**; REST is frozen to security
-fixes. Design reads currently go through `src/OdbDesignInfoClient.Services/Api/IOdbDesignRestApi.cs`
-+ `Api/Dtos/`, while gRPC codegen is already wired in
-`src/OdbDesign.ProductModel/OdbDesign.ProductModel.csproj` (`Protobuf` items from `:32`).
-So the transport exists; the read path just doesn't use it.
+Done in the F3 transport-switch PR: every content read (design matrix, step headers,
+EDA data, layer names, symbols, components/nets/packages/parts/drill tools) now derives
+from the cached gRPC `Design.FileModel`. REST keeps the discovery plane only
+(`/filemodels`, `/filemodels/{name}/steps`, `/healthz/*`) — the per-design step-name
+list has no cheap gRPC equivalent (`GetDesign` downloads the full file model, which is
+prohibitive for list views). The per-resource REST fallbacks for
+components/nets/packages/parts were deleted per D5, and with them the hand-mirrored
+`Api/Dtos/` shapes (including the transitional `MatrixDto`).
 
 **Transitional exception (recorded 2026-10-14, parity-rebuild PR #22):** ahead of this
 transport switch, the client added REST reads for `matrix/matrix`, `steps/{step}/stephdr`,
 and `steps/{step}/eda_data` (existing server routes), plus the hand-mirrored
 `Api/Dtos/MatrixDto.cs` — the parity rebuild needed authoritative stackup/EDA values
-before the switch landed. These are transitional and move with the rest of Part A:
-the already-downloaded gRPC `Design.FileModel` carries all three sources
-(`FileArchive.matrixFile`, `StepDirectory.stephdrfile`, `StepDirectory.edatafile`), so
-the F3 switch replaces these routes and deletes `MatrixDto` rather than growing the set
-further. No other `Api/Dtos/` growth is permitted in the meantime.
+before the switch landed. **Resolved by the F3 switch:** the already-downloaded gRPC
+`Design.FileModel` carries all three sources (`FileArchive.matrixFile`,
+`StepDirectory.stephdrfile`, `StepDirectory.edatafile`), the routes and `MatrixDto` are
+deleted, and no other `Api/Dtos/` growth occurred in the meantime.
 
-Sequence: switch the read path → delete the `Api/Dtos/` shapes it makes dead (including
-`MatrixDto` and the stephdr/eda_data REST routes above) → do not grow them. Verify with
-`dotnet build` and the existing test suite.
+## Part B — refresh vendored protos — DONE (F6 folded into F3)
 
-## Part B — refresh vendored protos
-
-`protoc/grpc/service.proto` is missing four shipped features: `GetStandardFonts`,
-`RequestLoadDesign`, `LoadStatus`, `include_normalized_lists`. Replace `protoc/` from the
-server repo's `OdbDesignLib/protoc/` + `OdbDesignServer/protoc/grpc/`.
+Replaced `protoc/` from the server repo's `OdbDesignLib/protoc/` +
+`OdbDesignServer/protoc/grpc/` in the F3 PR. The refresh gained `GetStandardFonts`,
+`RequestLoadDesign`, `LoadStatus`, and `include_normalized_lists` in
+`protoc/grpc/service.proto` (plus the cosmetic `cc_enable_arenas` option on the lib
+protos). `include_normalized_lists` stays unset everywhere: the product-model path
+reconstructs collections from the FileModel.
 
 Policy (D7): the server owns the protos; clients receive updates as a push. No drift check
 exists or is planned — refreshing is a manual step, and `Connectivity` will arrive the same way.

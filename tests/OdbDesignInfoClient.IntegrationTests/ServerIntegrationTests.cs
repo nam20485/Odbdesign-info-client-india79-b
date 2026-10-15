@@ -311,12 +311,26 @@ public class ServerIntegrationTests
             return;
         }
 
+        // Reachability gate, like the other live tests: CI runners cannot reach
+        // the Tailscale-hosted server, and without a reachable server there is
+        // no 401 to surface (the request never completes).
+        using var probe = new HttpClient { BaseAddress = new Uri(_baseUrl), Timeout = TimeSpan.FromSeconds(10) };
+        try
+        {
+            using var _ = await probe.GetAsync("/healthz/live");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _output.WriteLine($"SKIPPED: server not reachable at {_baseUrl}");
+            return;
+        }
+
         // Without credentials the server returns 401, which the service
         // must translate into a clear UnauthorizedAccessException
-        var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(
+        var ex2 = await Assert.ThrowsAsync<UnauthorizedAccessException>(
             () => sut.GetComponentsAsync(_designName, _stepName));
 
-        _output.WriteLine($"Received expected auth error: {ex.Message}");
+        _output.WriteLine($"Received expected auth error: {ex2.Message}");
     }
 
     [Fact]

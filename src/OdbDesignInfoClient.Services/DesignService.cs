@@ -356,7 +356,7 @@ public class DesignService : IDesignService
 
     private async Task<List<Component>> GetComponentsViaGrpcAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
-        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        var model = await GetProductModelAsync(designId, stepName);
         if (model is null || model.Components.Count == 0)
         {
             // Per-resource fallback: a nets-only product model (e.g. the step's
@@ -381,7 +381,7 @@ public class DesignService : IDesignService
     /// reconstructs them from the always-present <c>FileModel</c> (EDA data + per-layer component
     /// and tools files) exactly as the 3D client does.
     /// </remarks>
-    private async Task<DesignProductModel?> GetProductModelAsync(string designId, string stepName, CancellationToken cancellationToken)
+    private async Task<DesignProductModel?> GetProductModelAsync(string designId, string stepName)
     {
         var cacheKey = $"{designId}:{stepName}";
         if (_productModelCache.TryGetValue(cacheKey, out var cached) && !IsProductModelCacheExpired())
@@ -403,10 +403,13 @@ public class DesignService : IDesignService
 
         // A refresh fans out over every product-model-backed tab in parallel; they
         // all miss the cache at once, so share one in-flight download per
-        // (design, step) instead of issuing one GetDesign per tab.
+        // (design, step) instead of issuing one GetDesign per tab. The download
+        // deliberately runs on CancellationToken.None — its result feeds the
+        // 5-minute cache regardless of which load generation asked first, so a
+        // cancelled generation must not abort it for the tabs that still want it.
         var fetch = _productModelFetches.GetOrAdd(
             cacheKey,
-            _ => FetchProductModelAsync(grpcClient, cacheKey, designId, stepName, cancellationToken));
+            _ => FetchProductModelAsync(grpcClient, cacheKey, designId, stepName, CancellationToken.None));
         try
         {
             return await fetch.ConfigureAwait(false);
@@ -590,7 +593,7 @@ public class DesignService : IDesignService
 
     private async Task<List<Net>> GetNetsViaGrpcAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
-        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        var model = await GetProductModelAsync(designId, stepName);
         if (model is null || model.Nets.Count == 0)
         {
             // Per-resource fallback, mirroring the components path: a components-only
@@ -1002,7 +1005,7 @@ public class DesignService : IDesignService
 
         // Drill tools live in the step's tools file inside the gRPC FileModel — the server
         // exposes no REST route for them. Without gRPC the tab is intentionally empty.
-        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        var model = await GetProductModelAsync(designId, stepName);
         if (model is null)
         {
             _logger?.LogInformation(
@@ -1031,13 +1034,15 @@ public class DesignService : IDesignService
     {
         _logger?.LogInformation("Getting packages for design {DesignId}, step {StepName}", designId, stepName);
 
-        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
-        if (model is not null)
+        var model = await GetProductModelAsync(designId, stepName);
+        if (model is not null && model.Packages.Count > 0)
         {
             return model.Packages.Select(p => MapPackageDetail(p, model.Components)).ToList();
         }
 
-        // REST fallback: the /designs/{name}/packages control-plane endpoint.
+        // REST fallback (also for an empty model package list, e.g. a components-only
+        // model from a step without eda_data): the /designs/{name}/packages
+        // control-plane endpoint.
         try
         {
             var response = await _restApi.GetPackagesAsync(designId, cancellationToken);
@@ -1069,15 +1074,17 @@ public class DesignService : IDesignService
     {
         _logger?.LogInformation("Getting parts for design {DesignId}, step {StepName}", designId, stepName);
 
-        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
-        if (model is not null)
+        var model = await GetProductModelAsync(designId, stepName);
+        if (model is not null && model.Parts.Count > 0)
         {
             return model.Parts
                 .Select(p => MapPartInfo(p, model.Components))
                 .ToList();
         }
 
-        // REST fallback: the /designs/{name}/parts control-plane endpoint.
+        // REST fallback (also for an empty model part list, e.g. a components-only
+        // model from a step without eda_data): the /designs/{name}/parts
+        // control-plane endpoint.
         try
         {
             var response = await _restApi.GetPartsAsync(designId, cancellationToken);
@@ -1303,7 +1310,7 @@ public class DesignService : IDesignService
         // Via subnets live in the EDA net records inside the gRPC FileModel; the REST
         // nets projection exposes no via information. Without the product model the
         // list is honestly empty rather than fabricated.
-        var model = await GetProductModelAsync(designId, stepName, cancellationToken);
+        var model = await GetProductModelAsync(designId, stepName);
         if (model is null)
         {
             _logger?.LogInformation(

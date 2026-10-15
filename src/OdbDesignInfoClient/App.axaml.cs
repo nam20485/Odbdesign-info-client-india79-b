@@ -149,6 +149,11 @@ public partial class App : Application
         services.AddTransient<DrillToolsTabViewModel>();
         services.AddTransient<PackagesTabViewModel>();
         services.AddTransient<PartsTabViewModel>();
+        services.AddTransient<PinsTabViewModel>();
+        services.AddTransient<ViasTabViewModel>();
+        services.AddTransient<StepHierarchyTabViewModel>();
+        services.AddTransient<SymbolsTabViewModel>();
+        services.AddTransient<EdaDataTabViewModel>();
 
         // Register Main ViewModel
         services.AddTransient<MainViewModel>();

@@ -54,40 +54,53 @@
             <ItemsControl ItemsSource="{Binding Layers}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:LayerRowViewModel}">
-                        <Border Margin="0,2" Padding="8" 
+                        <Border Margin="0,2" Padding="8"
                                 CornerRadius="4"
                                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+                                <!-- Stack Order -->
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding StackOrder}"
+                                           Width="28"
+                                           VerticalAlignment="Center"
+                                           Opacity="0.7"
+                                           FontSize="12"
+                                           Margin="0,0,4,0"/>
+
                                 <!-- Layer Color Indicator -->
-                                <Border Grid.Column="0" 
-                                        Width="24" Height="24" 
+                                <Border Grid.Column="1"
+                                        Width="24" Height="24"
                                         CornerRadius="4"
                                         Background="{Binding TypeColor}"
                                         Margin="0,0,8,0"/>
-                                
-                                <!-- Layer Name -->
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+
+                                <!-- Layer Name + Type / Drill span -->
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
                                     <TextBlock Text="{Binding Type}" FontSize="11" Opacity="0.7"/>
+                                    <TextBlock Text="{Binding DrillSpan}"
+                                               FontSize="11"
+                                               Opacity="0.7"
+                                               IsVisible="{Binding HasDrillSpan}"/>
                                 </StackPanel>
-                                
+
                                 <!-- Polarity -->
-                                <TextBlock Grid.Column="2" 
+                                <TextBlock Grid.Column="3"
                                            Text="{Binding Polarity}"
                                            VerticalAlignment="Center"
-                                           Width="80"/>
-                                
+                                           Width="70"/>
+
                                 <!-- Material -->
-                                <TextBlock Grid.Column="3" 
+                                <TextBlock Grid.Column="4"
                                            Text="{Binding Material}"
                                            VerticalAlignment="Center"
-                                           Width="100"/>
-                                
+                                           Width="90"/>
+
                                 <!-- Thickness -->
-                                <TextBlock Grid.Column="4" 
-                                           Text="{Binding Thickness, StringFormat={}{0:F3} mm}"
+                                <TextBlock Grid.Column="5"
+                                           Text="{Binding Thickness}"
                                            VerticalAlignment="Center"
-                                           Width="80"
+                                           Width="70"
                                            HorizontalAlignment="Right"/>
                             </Grid>
                         </Border>

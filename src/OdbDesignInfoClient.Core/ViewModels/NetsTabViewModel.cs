@@ -109,6 +109,19 @@ public partial class NetsTabViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Clears the filter immediately, bypassing the input debounce.
+    /// </summary>
+    [RelayCommand]
+    private void ClearFilter()
+    {
+        // Setting the property reschedules the debounce; cancel it so the
+        // cleared filter applies right away instead of 300 ms later.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
+    }
+
     partial void OnFilterTextChanged(string value)
     {
         // Debounced: don't rebuild the row collection on every keystroke
@@ -171,19 +184,25 @@ public partial class NetsTabViewModel : ViewModelBase
 
     /// <summary>
     /// Navigates to a specific net by name.
+    /// Deep-linking must not filter the list: any active filter is cleared
+    /// immediately, then the target row is selected, expanded (opening its
+    /// feature children), and scrolled into view by the view's selection sync.
     /// </summary>
     public void NavigateToNet(string netName)
     {
-        // Apply the filter immediately rather than waiting out the debounce
+        // Clearing the property schedules a debounced re-apply; cancel it and
+        // restore the unfiltered list right away. Unconditional, like ClearFilter:
+        // the debounce can still be pending from a just-cleared filter even when
+        // FilterText is already empty, and a filtered grid would drop the selection.
+        FilterText = string.Empty;
         _filterDebounceCts?.Cancel();
-        FilterText = netName;
         ApplyFilter();
 
         var net = Nets.FirstOrDefault(n => n.Name.Equals(netName, StringComparison.OrdinalIgnoreCase));
         if (net != null)
         {
-            SelectedNet = net;
             net.IsExpanded = true;
+            SelectedNet = net;
         }
     }
 }

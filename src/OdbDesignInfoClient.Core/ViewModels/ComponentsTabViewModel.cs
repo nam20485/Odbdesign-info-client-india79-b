@@ -109,6 +109,19 @@ public partial class ComponentsTabViewModel : ViewModelBase
         }
     }
 
+    /// <summary>
+    /// Clears the filter immediately, bypassing the input debounce.
+    /// </summary>
+    [RelayCommand]
+    private void ClearFilter()
+    {
+        // Setting the property reschedules the debounce; cancel it so the
+        // cleared filter applies right away instead of 300 ms later.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
+    }
+
     partial void OnFilterTextChanged(string value)
     {
         // Debounced: don't rebuild the row collection on every keystroke
@@ -173,17 +186,24 @@ public partial class ComponentsTabViewModel : ViewModelBase
 
     /// <summary>
     /// Navigates to a specific component by RefDes.
+    /// Deep-linking must not filter the list: any active filter is cleared
+    /// immediately, then the target row is selected, expanded (opening its
+    /// pin children), and scrolled into view by the view's selection sync.
     /// </summary>
     public void NavigateToComponent(string refDes)
     {
-        // Apply the filter immediately rather than waiting out the debounce
+        // Clearing the property schedules a debounced re-apply; cancel it and
+        // restore the unfiltered list right away. Unconditional, like ClearFilter:
+        // the debounce can still be pending from a just-cleared filter even when
+        // FilterText is already empty, and a filtered grid would drop the selection.
+        FilterText = string.Empty;
         _filterDebounceCts?.Cancel();
-        FilterText = refDes;
         ApplyFilter();
 
         var component = Components.FirstOrDefault(c => c.RefDes.Equals(refDes, StringComparison.OrdinalIgnoreCase));
         if (component != null)
         {
+            component.IsExpanded = true;
             SelectedComponent = component;
         }
     }

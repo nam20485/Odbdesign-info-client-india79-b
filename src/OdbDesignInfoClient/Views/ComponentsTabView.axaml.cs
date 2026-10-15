@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Controls;
@@ -104,8 +103,11 @@ public partial class ComponentsTabView : UserControl
             return;
         }
 
-        var modelIndex = FindModelIndex(target);
-        if (modelIndex < 0)
+        // SelectedIndex addresses the grid's flat row list (roots plus expanded
+        // children), not the root ItemsSource — the two spaces only coincide while
+        // no row above the target is expanded, so resolve the index via Source.Rows.
+        var rowIndex = FindRowIndex(target);
+        if (rowIndex < 0)
         {
             return;
         }
@@ -113,7 +115,7 @@ public partial class ComponentsTabView : UserControl
         _isSyncingSelection = true;
         try
         {
-            selection.SelectedIndex = new IndexPath(modelIndex);
+            selection.SelectedIndex = new IndexPath(rowIndex);
         }
         finally
         {
@@ -125,7 +127,7 @@ public partial class ComponentsTabView : UserControl
         // has been realized — one layout pass after the bring-into-view.
         Dispatcher.UIThread.Post(() =>
         {
-            BringModelIntoView(target);
+            ComponentGrid.RowsPresenter?.BringIntoView(rowIndex);
             if (flash)
             {
                 Dispatcher.UIThread.Post(() => RowFlash.Flash(ComponentGrid, target), DispatcherPriority.Background);
@@ -133,39 +135,27 @@ public partial class ComponentsTabView : UserControl
         }, DispatcherPriority.Loaded);
     }
 
-    private int FindModelIndex(ComponentRowViewModel component)
-    {
-        if (ComponentGrid.ItemsSource is not IList items)
-        {
-            return -1;
-        }
-
-        for (var i = 0; i < items.Count; ++i)
-        {
-            if (ReferenceEquals(items[i], component))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private void BringModelIntoView(ComponentRowViewModel component)
+    /// <summary>
+    /// Finds the target row's index in the flat row list (roots plus expanded children)
+    /// — the index space <see cref="TreeDataGridRowSelection.SelectedIndex"/> and
+    /// <see cref="TreeDataGrid.RowsPresenter"/> address.
+    /// </summary>
+    private int FindRowIndex(ComponentRowViewModel component)
     {
         if (ComponentGrid.Source?.Rows is not { } rows)
         {
-            return;
+            return -1;
         }
 
         for (var i = 0; i < rows.Count; ++i)
         {
             if (ReferenceEquals(rows[i].Model, component))
             {
-                ComponentGrid.RowsPresenter?.BringIntoView(i);
-                return;
+                return i;
             }
         }
+
+        return -1;
     }
 
     /// <summary>

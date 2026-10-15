@@ -74,7 +74,11 @@ public class ComponentDetailBuilder
         AddComponentLookups(topComponents, BoardSide.Top, byIndex, byIndexAnySide);
         AddComponentLookups(bottomComponents, BoardSide.Bottom, byIndex, byIndexAnySide);
 
-        var scale = UnitsHelper.UnitsToMmScale(topComponents?.Units ?? bottomComponents?.Units);
+        // Placement coordinates (component locations, toeprint offsets) live in the
+        // components files; package geometry lives in EdaDataFile.PackageRecords —
+        // the two headers can declare different units, so each scales by its own.
+        var placementScale = UnitsHelper.UnitsToMmScale(topComponents?.Units ?? bottomComponents?.Units);
+        var packageScale = UnitsHelper.UnitsToMmScale(edaData.Units);
 
         // One pass over the nets builds both the net details (net tab) and the
         // per-component net summaries (component tab), keeping pin counts exact.
@@ -156,8 +160,8 @@ public class ComponentDetailBuilder
         // used by the netlist join, so one entry per component record.
         var byKey = new Dictionary<(BoardSide Side, uint Index), ComponentDetail>();
         var byName = new Dictionary<string, ComponentDetail>(StringComparer.Ordinal);
-        BuildSide(topComponents, BoardSide.Top, edaData, scale, netsByComponent, byKey, byName);
-        BuildSide(bottomComponents, BoardSide.Bottom, edaData, scale, netsByComponent, byKey, byName);
+        BuildSide(topComponents, BoardSide.Top, edaData, placementScale, packageScale, netsByComponent, byKey, byName);
+        BuildSide(bottomComponents, BoardSide.Bottom, edaData, placementScale, packageScale, netsByComponent, byKey, byName);
 
         var unresolved = netDetails.Sum(n => n.Connections.Count(c => c.ComponentName.StartsWith('#')));
         _logger.LogDebug(
@@ -171,7 +175,8 @@ public class ComponentDetailBuilder
         ComponentsFile? components,
         BoardSide side,
         EdaDataFile edaData,
-        double scale,
+        double placementScale,
+        double packageScale,
         Dictionary<(BoardSide Side, uint Index), List<NetSummary>> netsByComponent,
         Dictionary<(BoardSide Side, uint Index), ComponentDetail> byKey,
         Dictionary<string, ComponentDetail> byName)
@@ -186,8 +191,8 @@ public class ComponentDetailBuilder
         for (var i = 0; i < components.ComponentRecords.Count; i++)
         {
             var comp = components.ComponentRecords[i];
-            var package = ResolvePackage(comp, edaData, scale, out var pkgName);
-            var pins = BuildPins(comp, netNamesByNumber, scale);
+            var package = ResolvePackage(comp, edaData, packageScale, out var pkgName);
+            var pins = BuildPins(comp, netNamesByNumber, placementScale);
             // The list position (per-side ordinal) is the canonical netlist FK;
             // Comp.Id is never populated and must not key per-component data.
             netsByComponent.TryGetValue((side, (uint)i), out var nets);
@@ -205,8 +210,8 @@ public class ComponentDetailBuilder
                 string.IsNullOrEmpty(comp.PartName) ? null : comp.PartName,
                 ReadValueProperty(comp),
                 side,
-                comp.LocationX * scale,
-                comp.LocationY * scale,
+                comp.LocationX * placementScale,
+                comp.LocationY * placementScale,
                 comp.Rotation,
                 comp.Mirror,
                 heightMm,
@@ -243,7 +248,7 @@ public class ComponentDetailBuilder
     private static PackageDetail? ResolvePackage(
         ComponentsFile.Types.ComponentRecord comp,
         EdaDataFile edaData,
-        double scale,
+        double packageScale,
         out string? pkgName)
     {
         if (comp.PkgRef >= edaData.PackageRecords.Count)
@@ -256,11 +261,11 @@ public class ComponentDetailBuilder
         pkgName = pkg.Name;
         return new PackageDetail(
             pkg.Name,
-            pkg.Pitch > 0 ? pkg.Pitch * scale : null,
-            pkg.XMin * scale,
-            pkg.YMin * scale,
-            pkg.XMax * scale,
-            pkg.YMax * scale,
+            pkg.Pitch > 0 ? pkg.Pitch * packageScale : null,
+            pkg.XMin * packageScale,
+            pkg.YMin * packageScale,
+            pkg.XMax * packageScale,
+            pkg.YMax * packageScale,
             pkg.PinRecords.Count,
             pkg.OutlineRecords.Count);
     }

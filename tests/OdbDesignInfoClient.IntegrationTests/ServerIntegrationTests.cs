@@ -366,7 +366,7 @@ public class ServerIntegrationTests
         var grpcClient = connection!.GrpcClient;
         Assert.NotNull(grpcClient);
         var design = await grpcClient!.GetDesignAsync(new GetDesignRequest { DesignName = _designName });
-        var model = new ProductModelReader(NullLogger<ProductModelReader>.Instance).Read(design, _stepName);
+        var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, _stepName);
 
         var maxNetsPerComponent = model.Components.Count == 0 ? 0 : model.Components.Max(c => c.Nets.Count);
         var lowPinMinNets = model.Components.Where(c => c.Pins.Count <= 2).Select(c => c.Nets.Count).DefaultIfEmpty(0).Min();

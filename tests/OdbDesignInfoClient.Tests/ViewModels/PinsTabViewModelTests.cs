@@ -167,14 +167,18 @@ public class PinsTabViewModelTests
         await WaitForFilterAppliedAsync(() => _sut.Pins.Count == 2);
         Assert.All(_sut.Pins, p => Assert.Equal("R1", p.RefDes));
 
-        // Net match keeps only the GND rows
+        // Net match keeps the two GND rows (R1-1 and C1-1); the RefDes check in the
+        // wait condition distinguishes the applied result from the stale "r1" rows.
         _sut.FilterText = "gnd";
-        await WaitForFilterAppliedAsync(() => _sut.Pins.Count == 1);
-        Assert.Equal("GND", _sut.Pins[0].NetName);
+        await WaitForFilterAppliedAsync(() => _sut.Pins.Count == 2 && _sut.Pins[1].RefDes == "C1");
+        Assert.Equal(2, _sut.Pins.Count);
+        Assert.All(_sut.Pins, p => Assert.Equal("GND", p.NetName));
 
-        // Pin-name match
+        // Pin-name match keeps the single "2" row (R1's second pin, on NET2)
         _sut.FilterText = "2";
-        await WaitForFilterAppliedAsync(() => _sut.Pins.Count == 2);
+        await WaitForFilterAppliedAsync(() => _sut.Pins.Count == 1);
+        Assert.Single(_sut.Pins);
+        Assert.Equal("R1", _sut.Pins[0].RefDes);
     }
 
     [Fact]

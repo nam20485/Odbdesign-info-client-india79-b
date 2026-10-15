@@ -501,6 +501,44 @@ public class DesignServiceTests
     }
 
     [Fact]
+    public async Task GetStackupAsync_ThrowsUnauthorizedAccessException_OnMatrixAuthFailure()
+    {
+        // Arrange - a 401 on the matrix call is an auth error, not a degrade path
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateErrorResponse(HttpStatusCode.Unauthorized));
+
+        // Act & Assert - must surface like every other resource, never silently
+        // fall back to an empty stackup
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(
+            async () => await _sut.GetStackupAsync("design-1", "pcb"));
+    }
+
+    [Fact]
+    public async Task GetStackupAsync_ParsesFractionalColorChannels_WithoutFailing()
+    {
+        // Arrange - the proto declares the color channels as float, so the JSON
+        // projection can carry fractional values; the parse must not throw
+        var matrixJson = """
+            {
+              "layers": [
+                { "row": 1, "type": "Dielectric", "name": "D1",
+                  "color": { "red": 99.5, "green": 200.25, "blue": 55.75, "noPreference": false } }
+              ]
+            }
+            """;
+        _mockRestApi.Setup(x => x.GetMatrixAsync("design-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateSuccessResponse(matrixJson));
+
+        // Act
+        var result = await _sut.GetStackupAsync("design-1", "pcb");
+
+        // Assert - fractional channels truncate into the 0-255 hex display
+        Assert.NotNull(result);
+        Assert.Single(result);
+        Assert.Equal("#63C837", result[0].ColorHex);
+    }
+
+    [Fact]
     public async Task GetStackupAsync_ParsesEnvelopeFormat_InLayerNameFallback()
     {
         // Arrange - the layer-name list arrives wrapped in a "layers" envelope

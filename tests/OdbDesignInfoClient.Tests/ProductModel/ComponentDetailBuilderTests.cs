@@ -314,7 +314,7 @@ public class ComponentDetailBuilderTests
         var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
         design.FileModel.StepsByName["step"] = step;
 
-        var model = new ProductModelReader(NullLogger<ProductModelReader>.Instance).Read(design, "step");
+        var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
 
         // ByKey-derived component list: one entry per record, not one per side.
         Assert.Equal(4, model.Components.Count);
@@ -336,7 +336,7 @@ public class ComponentDetailBuilderTests
         Assert.Equal(1, model.Components.Min(c => c.Nets.Count));
 
         // Unknown step → empty model (degrade, never throw).
-        var reader = new ProductModelReader(NullLogger<ProductModelReader>.Instance);
+        var reader = new ProductModelReader(NullLoggerFactory.Instance);
         Assert.Same(DesignProductModel.Empty, reader.Read(design, "no-such-step"));
         Assert.Same(DesignProductModel.Empty, reader.Read(null, "step"));
     }
@@ -368,7 +368,7 @@ public class ComponentDetailBuilderTests
         var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
         design.FileModel.StepsByName["step"] = step;
 
-        var model = new ProductModelReader(NullLogger<ProductModelReader>.Instance).Read(design, "step");
+        var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
 
         // The additive ViaCount field carries the per-net VIA subnet counts...
         Assert.Equal(2, model.Nets.Single(n => n.Name == "VCC").ViaCount);
@@ -383,5 +383,88 @@ public class ComponentDetailBuilderTests
 
         // Total subnet count still reports every subnet (4 toeprints + 2 vias).
         Assert.Equal(6, model.Nets.Single(n => n.Name == "VCC").SubnetCount);
+    }
+
+    [Fact]
+    public void Read_ClassifiesDrillToolPlating_PlatedViasAndNonPlated()
+    {
+        var (top, bottom) = CreateSyntheticComponents();
+        var step = new StepDirectory { Name = "step" };
+        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
+        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
+        step.Edadatafile = CreateSyntheticEdaData();
+
+        var tools = new ToolsFile { Units = "mm" };
+        tools.Tools[1] = new ToolsFile.Types.ToolsRecord
+        {
+            ToolNum = 1,
+            Type = ToolsFile.Types.ToolsRecord.Types.Type.Plated,
+            DrillSize = 0.3,
+        };
+        tools.Tools[2] = new ToolsFile.Types.ToolsRecord
+        {
+            ToolNum = 2,
+            Type = ToolsFile.Types.ToolsRecord.Types.Type.NonPlated,
+            DrillSize = 0.5,
+        };
+        tools.Tools[3] = new ToolsFile.Types.ToolsRecord
+        {
+            ToolNum = 3,
+            Type = ToolsFile.Types.ToolsRecord.Types.Type.Via,
+            DrillSize = 0.2,
+        };
+        step.LayersByName["drill"] = new LayerDirectory { ToolFile = tools };
+
+        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
+        design.FileModel.StepsByName["step"] = step;
+
+        var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
+
+        Assert.True(model.DrillTools.Single(t => t.ToolNumber == 1).IsPlated);
+        Assert.False(model.DrillTools.Single(t => t.ToolNumber == 2).IsPlated);
+        // A Via tool is a distinct enum but still drills a plated via hole —
+        // only NonPlated may report unplated.
+        Assert.True(model.DrillTools.Single(t => t.ToolNumber == 3).IsPlated);
+    }
+
+    [Fact]
+    public void Read_ScalesPackageGeometryByEdaUnits_PlacementsByComponentsUnits()
+    {
+        var (top, bottom) = CreateSyntheticComponents();
+        top.Units = "mm";
+
+        // The EDA header declares inch while the components files declare mm —
+        // package geometry must follow its own file's units, not the placements'.
+        var eda = CreateSyntheticEdaData();
+        eda.Units = "inch";
+        var r0603 = eda.PackageRecords[0];
+        r0603.Pitch = 0.5;
+        r0603.XMin = 1;
+        r0603.XMax = 2;
+        r0603.YMin = -1;
+        r0603.YMax = 1;
+
+        var step = new StepDirectory { Name = "step" };
+        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
+        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
+        step.Edadatafile = eda;
+
+        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
+        design.FileModel.StepsByName["step"] = step;
+
+        var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
+
+        var package = model.Packages.Single(p => p.Name == "R0603");
+        Assert.Equal(0.5 * 25.4, package.Pitch!.Value, 3);
+        Assert.Equal(1 * 25.4, package.XMin, 3);
+        Assert.Equal(2 * 25.4, package.XMax, 3);
+
+        // Placements still scale by the components file's own (mm) header.
+        var r1 = model.Components.Single(c => c.Name == "R1");
+        Assert.Equal(1.5, r1.PositionX);
+        Assert.Equal(-2.5, r1.PositionY);
+
+        // The builder's per-component package detail uses the same EDA scale.
+        Assert.Equal(0.5 * 25.4, r1.Package!.Pitch!.Value, 3);
     }
 }

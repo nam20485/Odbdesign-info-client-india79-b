@@ -64,12 +64,12 @@ public class ProductModelReader
     /// <summary>
     /// Initializes a new instance of the <see cref="ProductModelReader"/> class.
     /// </summary>
-    /// <param name="logger">Logger for diagnostics.</param>
-    public ProductModelReader(ILogger<ProductModelReader> logger)
+    /// <param name="loggerFactory">Factory for this reader's and the builder's loggers.</param>
+    public ProductModelReader(ILoggerFactory loggerFactory)
     {
-        _builder = new ComponentDetailBuilder(
-            logger as ILogger<ComponentDetailBuilder>
-            ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ComponentDetailBuilder>.Instance);
+        // ILogger<T> categories are not interchangeable: a cast between closed
+        // generic logger types always fails, so create each category from the factory.
+        _builder = new ComponentDetailBuilder(loggerFactory.CreateLogger<ComponentDetailBuilder>());
     }
 
     /// <summary>
@@ -90,7 +90,10 @@ public class ProductModelReader
         var bottomComponents = GetComponentsFile(stepDir, BoardSide.Bottom);
         var edaData = stepDir.Edadatafile;
 
-        var scale = UnitsHelper.UnitsToMmScale(topComponents?.Units ?? bottomComponents?.Units);
+        // Package geometry comes from EdaDataFile.PackageRecords, so it scales by
+        // that file's own units — not the components-file units used for placements
+        // (the two headers can differ, and component files can be absent entirely).
+        var packageScale = UnitsHelper.UnitsToMmScale(edaData?.Units);
 
         // Components + nets come from the shared builder (joins toeprints → nets).
         // ByKey is the complete component list: it keys every record on
@@ -102,7 +105,7 @@ public class ProductModelReader
         var components = index.ByKey.Values.ToList();
 
 
-        var packages = BuildPackages(edaData, scale);
+        var packages = BuildPackages(edaData, packageScale);
         var parts = BuildParts(components);
         var drillTools = BuildDrillTools(stepDir);
         var nets = ApplyViaCounts(index.Nets, edaData);
@@ -221,7 +224,8 @@ public class ProductModelReader
                     record.DrillSize * scale,
                     record.FinishSize * scale,
                     type.ToString(),
-                    type == ToolsFile.Types.ToolsRecord.Types.Type.Plated,
+                    // Via tools drill plated via holes: only NonPlated is unplated.
+                    type != ToolsFile.Types.ToolsRecord.Types.Type.NonPlated,
                     toolsFile.Units ?? string.Empty));
             }
         }

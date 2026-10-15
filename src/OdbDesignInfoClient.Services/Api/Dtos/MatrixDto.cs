@@ -112,25 +112,30 @@ public sealed class MatrixLayerDto
 /// <summary>
 /// An RGB display color in the design matrix.
 /// </summary>
+/// <remarks>
+/// The proto declares the channels as <c>float</c>, so the server's JSON may carry
+/// fractional values; <see langword="double"/> binds those without throwing (an
+/// integral-only type would abort the whole stackup parse on e.g. <c>99.5</c>).
+/// </remarks>
 public sealed class MatrixColorDto
 {
     /// <summary>
     /// Gets the red channel (0-255).
     /// </summary>
     [JsonPropertyName("red")]
-    public uint Red { get; init; }
+    public double Red { get; init; }
 
     /// <summary>
     /// Gets the green channel (0-255).
     /// </summary>
     [JsonPropertyName("green")]
-    public uint Green { get; init; }
+    public double Green { get; init; }
 
     /// <summary>
     /// Gets the blue channel (0-255).
     /// </summary>
     [JsonPropertyName("blue")]
-    public uint Blue { get; init; }
+    public double Blue { get; init; }
 
     /// <summary>
     /// Gets a value indicating whether the design specifies no preferred color

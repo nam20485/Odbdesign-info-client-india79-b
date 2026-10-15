@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Controls;
@@ -104,8 +103,11 @@ public partial class NetsTabView : UserControl
             return;
         }
 
-        var modelIndex = FindModelIndex(target);
-        if (modelIndex < 0)
+        // SelectedIndex addresses the grid's flat row list (roots plus expanded
+        // children), not the root ItemsSource — the two spaces only coincide while
+        // no row above the target is expanded, so resolve the index via Source.Rows.
+        var rowIndex = FindRowIndex(target);
+        if (rowIndex < 0)
         {
             return;
         }
@@ -113,7 +115,7 @@ public partial class NetsTabView : UserControl
         _isSyncingSelection = true;
         try
         {
-            selection.SelectedIndex = new IndexPath(modelIndex);
+            selection.SelectedIndex = new IndexPath(rowIndex);
         }
         finally
         {
@@ -125,7 +127,7 @@ public partial class NetsTabView : UserControl
         // has been realized — one layout pass after the bring-into-view.
         Dispatcher.UIThread.Post(() =>
         {
-            BringModelIntoView(target);
+            NetGrid.RowsPresenter?.BringIntoView(rowIndex);
             if (flash)
             {
                 Dispatcher.UIThread.Post(() => RowFlash.Flash(NetGrid, target), DispatcherPriority.Background);
@@ -133,39 +135,27 @@ public partial class NetsTabView : UserControl
         }, DispatcherPriority.Loaded);
     }
 
-    private int FindModelIndex(NetRowViewModel net)
-    {
-        if (NetGrid.ItemsSource is not IList items)
-        {
-            return -1;
-        }
-
-        for (var i = 0; i < items.Count; ++i)
-        {
-            if (ReferenceEquals(items[i], net))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private void BringModelIntoView(NetRowViewModel net)
+    /// <summary>
+    /// Finds the target row's index in the flat row list (roots plus expanded children)
+    /// — the index space <see cref="TreeDataGridRowSelection.SelectedIndex"/> and
+    /// <see cref="TreeDataGrid.RowsPresenter"/> address.
+    /// </summary>
+    private int FindRowIndex(NetRowViewModel net)
     {
         if (NetGrid.Source?.Rows is not { } rows)
         {
-            return;
+            return -1;
         }
 
         for (var i = 0; i < rows.Count; ++i)
         {
             if (ReferenceEquals(rows[i].Model, net))
             {
-                NetGrid.RowsPresenter?.BringIntoView(i);
-                return;
+                return i;
             }
         }
+
+        return -1;
     }
 
     /// <summary>
@@ -208,8 +198,8 @@ public partial class NetsTabView : UserControl
 
         SetStringSort(nameColumn, m => m is NetRowViewModel n ? n.Name : (m as NetFeatureRowViewModel)?.Id);
         SetNumericSort(pinCountColumn, m => (m as NetRowViewModel)?.PinCount);
-        SetStringSort(viaCountColumn, m =>
-            m is NetRowViewModel n ? n.ViaCount.ToString() : (m as NetFeatureRowViewModel)?.ComponentRef);
+        // Numeric compare: string sorting would order via counts 0, 1, 10, 11, 2 …
+        SetNumericSort(viaCountColumn, m => (m as NetRowViewModel)?.ViaCount);
     }
 
     private static void SetStringSort(TreeDataGridColumn column, Func<object?, string?> selector)

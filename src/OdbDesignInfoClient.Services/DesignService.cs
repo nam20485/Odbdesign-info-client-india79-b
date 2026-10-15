@@ -4,6 +4,7 @@ using System.Net;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Odb.Grpc;
 using OdbDesign.ProductModel;
 using OdbDesign.ProductModel.Models;
@@ -45,6 +46,7 @@ public class DesignService : IDesignService
     private readonly ConcurrentDictionary<string, IReadOnlyList<Net>> _netCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<Layer>> _stackupCache = new();
     private readonly ConcurrentDictionary<string, DesignProductModel> _productModelCache = new();
+    private readonly ConcurrentDictionary<string, Task<DesignProductModel?>> _productModelFetches = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<StepSummary>> _stepSummaryCache = new();
     private readonly ConcurrentDictionary<string, IReadOnlyList<SymbolSummary>> _symbolCache = new();
     private readonly ConcurrentDictionary<string, EdaDataSummary> _edaDataCache = new();
@@ -54,6 +56,7 @@ public class DesignService : IDesignService
     private DateTime _componentCacheRefresh = DateTime.MinValue;
     private DateTime _netCacheRefresh = DateTime.MinValue;
     private DateTime _stackupCacheRefresh = DateTime.MinValue;
+    private DateTime _productModelCacheRefresh = DateTime.MinValue;
     private DateTime _stepSummaryCacheRefresh = DateTime.MinValue;
     private DateTime _symbolCacheRefresh = DateTime.MinValue;
     private DateTime _edaDataCacheRefresh = DateTime.MinValue;
@@ -65,14 +68,16 @@ public class DesignService : IDesignService
     public DesignService(
         IConnectionService connectionService,
         IOdbDesignRestApi restApi,
-        ILogger<DesignService>? logger = null)
+        ILogger<DesignService>? logger = null,
+        ILoggerFactory? loggerFactory = null)
     {
         _connectionService = connectionService;
         _restApi = restApi;
         _logger = logger;
-        _productModelReader = new ProductModelReader(
-            logger as ILogger<ProductModelReader>
-            ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<ProductModelReader>.Instance);
+        // ILogger<T> categories are not interchangeable (a cast between closed
+        // generic logger types always yields null), so the product-model reader
+        // builds its loggers from a factory.
+        _productModelReader = new ProductModelReader(loggerFactory ?? NullLoggerFactory.Instance);
     }
 
     /// <inheritdoc />
@@ -352,8 +357,11 @@ public class DesignService : IDesignService
     private async Task<List<Component>> GetComponentsViaGrpcAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
         var model = await GetProductModelAsync(designId, stepName, cancellationToken);
-        if (model is null)
+        if (model is null || model.Components.Count == 0)
         {
+            // Per-resource fallback: a nets-only product model (e.g. the step's
+            // comp_+_top / comp_+_bot files are missing) must not short-circuit
+            // the components tab to empty — try the REST projection first.
             return await GetComponentsViaRestAsync(designId, cancellationToken);
         }
 
@@ -376,7 +384,7 @@ public class DesignService : IDesignService
     private async Task<DesignProductModel?> GetProductModelAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
         var cacheKey = $"{designId}:{stepName}";
-        if (_productModelCache.TryGetValue(cacheKey, out var cached))
+        if (_productModelCache.TryGetValue(cacheKey, out var cached) && !IsProductModelCacheExpired())
         {
             return cached;
         }
@@ -393,12 +401,38 @@ public class DesignService : IDesignService
             return null;
         }
 
+        // A refresh fans out over every product-model-backed tab in parallel; they
+        // all miss the cache at once, so share one in-flight download per
+        // (design, step) instead of issuing one GetDesign per tab.
+        var fetch = _productModelFetches.GetOrAdd(
+            cacheKey,
+            _ => FetchProductModelAsync(grpcClient, cacheKey, designId, stepName, cancellationToken));
+        try
+        {
+            return await fetch.ConfigureAwait(false);
+        }
+        finally
+        {
+            // Drop the completed entry (success or failure) so a later call after
+            // the TTL expiry fetches fresh data instead of awaiting a terminal task.
+            _productModelFetches.TryRemove(KeyValuePair.Create(cacheKey, fetch));
+        }
+    }
+
+    private async Task<DesignProductModel?> FetchProductModelAsync(
+        OdbDesignService.OdbDesignServiceClient grpcClient,
+        string cacheKey,
+        string designId,
+        string stepName,
+        CancellationToken cancellationToken)
+    {
         try
         {
             var request = new GetDesignRequest { DesignName = designId };
             var design = await grpcClient.GetDesignAsync(request, cancellationToken: cancellationToken);
             var model = _productModelReader.Read(design, stepName);
-            if (model.Components.Count == 0 && model.Nets.Count == 0)
+            if (model.Components.Count == 0 && model.Nets.Count == 0 &&
+                model.Packages.Count == 0 && model.Parts.Count == 0 && model.DrillTools.Count == 0)
             {
                 _logger?.LogWarning(
                     "gRPC product model was empty for {DesignId}/{StepName}; falling back to REST",
@@ -407,6 +441,7 @@ public class DesignService : IDesignService
             }
 
             _productModelCache[cacheKey] = model;
+            _productModelCacheRefresh = DateTime.Now;
             return model;
         }
         catch (Exception ex)
@@ -451,7 +486,9 @@ public class DesignService : IDesignService
         Features = detail.Connections.Select(c => new NetFeature
         {
             FeatureType = "Pin",
-            Id = c.PinNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            // Same identifier shape as the REST mapping (ComponentRef-pin), so the
+            // Feature Id column shows consistent content per transport.
+            Id = $"{c.ComponentName}-{c.PinNumber}",
             ComponentRef = c.ComponentName,
         }).ToList(),
     };
@@ -483,7 +520,7 @@ public class DesignService : IDesignService
 
             if (!response.IsSuccessStatusCode)
             {
-                HandleHttpError(response.StatusCode, designId, "components");
+                HandleHttpError(response.StatusCode ?? HttpStatusCode.InternalServerError, designId, "components");
             }
 
             if (string.IsNullOrWhiteSpace(response.Content))
@@ -554,8 +591,10 @@ public class DesignService : IDesignService
     private async Task<List<Net>> GetNetsViaGrpcAsync(string designId, string stepName, CancellationToken cancellationToken)
     {
         var model = await GetProductModelAsync(designId, stepName, cancellationToken);
-        if (model is null)
+        if (model is null || model.Nets.Count == 0)
         {
+            // Per-resource fallback, mirroring the components path: a components-only
+            // model must not short-circuit the nets tab to empty.
             return await GetNetsViaRestAsync(designId, cancellationToken);
         }
 
@@ -590,7 +629,7 @@ public class DesignService : IDesignService
 
             if (!response.IsSuccessStatusCode)
             {
-                HandleHttpError(response.StatusCode, designId, "nets");
+                HandleHttpError(response.StatusCode ?? HttpStatusCode.InternalServerError, designId, "nets");
             }
 
             if (string.IsNullOrWhiteSpace(response.Content))
@@ -654,6 +693,14 @@ public class DesignService : IDesignService
             }
             else
             {
+                if (matrixResponse.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    // 401 is not a degrade path: surfacing the auth error matches the
+                    // contract every other resource follows (and the integration test
+                    // Live_UnauthenticatedRequest_SurfacesUnauthorizedError asserts).
+                    HandleHttpError(matrixResponse.StatusCode ?? HttpStatusCode.InternalServerError, designId, "stackup matrix");
+                }
+
                 _logger?.LogWarning(
                     "Matrix fetch failed for design {DesignId} (status {StatusCode}); falling back to layer names. Stackup detail will be limited.",
                     designId,
@@ -760,7 +807,7 @@ public class DesignService : IDesignService
         return FormattableString.Invariant($"#{ToHex(color.Red)}{ToHex(color.Green)}{ToHex(color.Blue)}");
     }
 
-    private static string ToHex(uint channel) => Math.Min(channel, 255u).ToString("X2");
+    private static string ToHex(double channel) => ((uint)Math.Clamp(channel, 0d, 255d)).ToString("X2");
 
     /// <summary>
     /// Returns a conventional display color for a layer type when the design specifies none.
@@ -940,6 +987,7 @@ public class DesignService : IDesignService
     private bool IsComponentCacheExpired() => DateTime.Now - _componentCacheRefresh > _cacheExpiration;
     private bool IsNetCacheExpired() => DateTime.Now - _netCacheRefresh > _cacheExpiration;
     private bool IsStackupCacheExpired() => DateTime.Now - _stackupCacheRefresh > _cacheExpiration;
+    private bool IsProductModelCacheExpired() => DateTime.Now - _productModelCacheRefresh > _cacheExpiration;
     private bool IsStepSummaryCacheExpired() => DateTime.Now - _stepSummaryCacheRefresh > _cacheExpiration;
     private bool IsSymbolCacheExpired() => DateTime.Now - _symbolCacheRefresh > _cacheExpiration;
     private bool IsEdaDataCacheExpired() => DateTime.Now - _edaDataCacheRefresh > _cacheExpiration;
@@ -1000,7 +1048,7 @@ public class DesignService : IDesignService
 
             if (!response.IsSuccessStatusCode)
             {
-                HandleHttpError(response.StatusCode, designId, "packages");
+                HandleHttpError(response.StatusCode ?? HttpStatusCode.InternalServerError, designId, "packages");
             }
 
             var dtos = JsonSerializer.Deserialize<List<PackageDto>>(response.Content, JsonOptions) ?? [];
@@ -1040,7 +1088,7 @@ public class DesignService : IDesignService
 
             if (!response.IsSuccessStatusCode)
             {
-                HandleHttpError(response.StatusCode, designId, "parts");
+                HandleHttpError(response.StatusCode ?? HttpStatusCode.InternalServerError, designId, "parts");
             }
 
             var dtos = JsonSerializer.Deserialize<List<PartDto>>(response.Content, JsonOptions) ?? [];
@@ -1073,7 +1121,7 @@ public class DesignService : IDesignService
 
         if (!stepsResponse.IsSuccessStatusCode)
         {
-            HandleHttpError(stepsResponse.StatusCode, designId, "steps");
+            HandleHttpError(stepsResponse.StatusCode ?? HttpStatusCode.InternalServerError, designId, "steps");
         }
 
         if (string.IsNullOrWhiteSpace(stepsResponse.Content))
@@ -1195,7 +1243,7 @@ public class DesignService : IDesignService
 
         if (!response.IsSuccessStatusCode)
         {
-            HandleHttpError(response.StatusCode, designId, "symbols");
+            HandleHttpError(response.StatusCode ?? HttpStatusCode.InternalServerError, designId, "symbols");
         }
 
         if (string.IsNullOrWhiteSpace(response.Content))
@@ -1300,7 +1348,7 @@ public class DesignService : IDesignService
 
         if (!response.IsSuccessStatusCode)
         {
-            HandleHttpError(response.StatusCode, designId, "eda_data");
+            HandleHttpError(response.StatusCode ?? HttpStatusCode.InternalServerError, designId, "eda_data");
         }
 
         if (string.IsNullOrWhiteSpace(response.Content))
@@ -1432,7 +1480,9 @@ public class DesignService : IDesignService
     private static Package MapPackageDetail(PackageDetail detail, IReadOnlyList<ComponentDetail> components) => new()
     {
         Name = detail.Name,
-        Pitch = detail.Pitch ?? 0d,
+        // Null pitch stays null: an unavailable value must not surface as an
+        // authoritative 0.000 mm.
+        Pitch = detail.Pitch,
         PinCount = detail.PinCount,
         Width = detail.XMax - detail.XMin,
         Height = detail.YMax - detail.YMin,
@@ -1451,8 +1501,10 @@ public class DesignService : IDesignService
     {
         PartNumber = info.Name,
         UsageCount = info.UsageCount,
+        // The reader groups part names case-insensitively, so the usage join must
+        // too — otherwise UsageCount can exceed the rows rendered beneath it.
         Usages = components
-            .Where(c => c.PartName == info.Name)
+            .Where(c => string.Equals(c.PartName, info.Name, StringComparison.OrdinalIgnoreCase))
             .Select(c => new EntityUsage
             {
                 ComponentRefDes = c.Name,
@@ -1463,7 +1515,7 @@ public class DesignService : IDesignService
     private static Package MapPackageDto(PackageDto dto) => new()
     {
         Name = dto.Name ?? string.Empty,
-        Pitch = dto.Pitch ?? 0d,
+        Pitch = dto.Pitch,
         PinCount = dto.Pins?.Count ?? 0,
         Width = (dto.XMax ?? 0f) - (dto.XMin ?? 0f),
         Height = (dto.YMax ?? 0f) - (dto.YMin ?? 0f),
@@ -1520,6 +1572,7 @@ public class DesignService : IDesignService
         _componentCacheRefresh = DateTime.MinValue;
         _netCacheRefresh = DateTime.MinValue;
         _stackupCacheRefresh = DateTime.MinValue;
+        _productModelCacheRefresh = DateTime.MinValue;
         _stepSummaryCacheRefresh = DateTime.MinValue;
         _symbolCacheRefresh = DateTime.MinValue;
         _edaDataCacheRefresh = DateTime.MinValue;

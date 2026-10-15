@@ -287,9 +287,10 @@ public record Package
     public string Name { get; init; } = string.Empty;
 
     /// <summary>
-    /// Gets or sets the package pitch.
+    /// Gets or sets the package pitch. Null when the design declares no pitch —
+    /// unavailable data must not surface as an authoritative zero.
     /// </summary>
-    public double Pitch { get; init; }
+    public double? Pitch { get; init; }
 
     /// <summary>
     /// Gets or sets the number of pins in the package.

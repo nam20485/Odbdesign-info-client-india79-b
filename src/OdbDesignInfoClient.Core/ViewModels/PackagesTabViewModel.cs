@@ -190,7 +190,7 @@ public partial class PackageRowViewModel : ObservableObject
     private string _name = string.Empty;
 
     [ObservableProperty]
-    private double _pitch;
+    private double? _pitch;
 
     [ObservableProperty]
     private int _pinCount;
@@ -211,6 +211,11 @@ public partial class PackageRowViewModel : ObservableObject
     /// Gets the dimensions as a formatted string.
     /// </summary>
     public string Dimensions => $"{Width:F2} x {Height:F2}";
+
+    /// <summary>
+    /// Gets the pitch formatted for display; "n/a" when the design declares none.
+    /// </summary>
+    public string PitchDisplay => Pitch?.ToString("F3") ?? "n/a";
 }
 
 /// <summary>

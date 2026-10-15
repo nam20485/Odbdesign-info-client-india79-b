@@ -43,11 +43,13 @@
             <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
         </Border>
 
-        <!-- Honest Empty State -->
+        <!-- Honest Empty State (positive ZIndex: renders above the DataGrid that
+             shares this cell, below the loading overlay) -->
         <Border Grid.Row="3"
                 IsVisible="{Binding IsEmpty}"
                 Background="{DynamicResource SystemControlBackgroundChromeLowBrush}"
-                Padding="16">
+                Padding="16"
+                ZIndex="1">
             <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="8">
                 <TextBlock Text="No symbols"
                            FontSize="16"

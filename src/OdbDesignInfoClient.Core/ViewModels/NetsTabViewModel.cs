@@ -190,15 +190,13 @@ public partial class NetsTabViewModel : ViewModelBase
     /// </summary>
     public void NavigateToNet(string netName)
     {
-        if (!string.IsNullOrEmpty(FilterText))
-        {
-            // Clearing the property schedules a debounced re-apply; cancel it and
-            // restore the unfiltered list right away so the grid isn't reduced to
-            // a single row before the selection is made.
-            FilterText = string.Empty;
-            _filterDebounceCts?.Cancel();
-            ApplyFilter();
-        }
+        // Clearing the property schedules a debounced re-apply; cancel it and
+        // restore the unfiltered list right away. Unconditional, like ClearFilter:
+        // the debounce can still be pending from a just-cleared filter even when
+        // FilterText is already empty, and a filtered grid would drop the selection.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
 
         var net = Nets.FirstOrDefault(n => n.Name.Equals(netName, StringComparison.OrdinalIgnoreCase));
         if (net != null)

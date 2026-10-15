@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Controls;
@@ -100,8 +99,11 @@ public partial class PackagesTabView : UserControl
             return;
         }
 
-        var modelIndex = FindModelIndex(target);
-        if (modelIndex < 0)
+        // SelectedIndex addresses the grid's flat row list (roots plus expanded
+        // children), not the root ItemsSource — the two spaces only coincide while
+        // no row above the target is expanded, so resolve the index via Source.Rows.
+        var rowIndex = FindRowIndex(target);
+        if (rowIndex < 0)
         {
             return;
         }
@@ -109,7 +111,7 @@ public partial class PackagesTabView : UserControl
         _isSyncingSelection = true;
         try
         {
-            selection.SelectedIndex = new IndexPath(modelIndex);
+            selection.SelectedIndex = new IndexPath(rowIndex);
         }
         finally
         {
@@ -117,42 +119,30 @@ public partial class PackagesTabView : UserControl
         }
 
         // Rows realize asynchronously; bring the row into view once layout has settled.
-        Dispatcher.UIThread.Post(() => BringModelIntoView(target), DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(() => PackageGrid.RowsPresenter?.BringIntoView(rowIndex), DispatcherPriority.Loaded);
     }
 
-    private int FindModelIndex(PackageRowViewModel package)
-    {
-        if (PackageGrid.ItemsSource is not IList items)
-        {
-            return -1;
-        }
-
-        for (var i = 0; i < items.Count; ++i)
-        {
-            if (ReferenceEquals(items[i], package))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private void BringModelIntoView(PackageRowViewModel package)
+    /// <summary>
+    /// Finds the target row's index in the flat row list (roots plus expanded children)
+    /// — the index space <see cref="TreeDataGridRowSelection.SelectedIndex"/> and
+    /// <see cref="TreeDataGrid.RowsPresenter"/> address.
+    /// </summary>
+    private int FindRowIndex(PackageRowViewModel package)
     {
         if (PackageGrid.Source?.Rows is not { } rows)
         {
-            return;
+            return -1;
         }
 
         for (var i = 0; i < rows.Count; ++i)
         {
             if (ReferenceEquals(rows[i].Model, package))
             {
-                PackageGrid.RowsPresenter?.BringIntoView(i);
-                return;
+                return i;
             }
         }
+
+        return -1;
     }
 
     /// <summary>
@@ -204,10 +194,23 @@ public partial class PackagesTabView : UserControl
         var dimensionsColumn = (TreeDataGridTemplateColumn)columns[3];
 
         SetStringSort(nameColumn, m => m is PackageRowViewModel p ? p.Name : (m as PackageUsageRowViewModel)?.ComponentRefDes);
-        SetStringSort(pitchColumn, m => m is PackageRowViewModel p ? p.Pitch.ToString("F3") : (m as PackageUsageRowViewModel)?.PartName);
+        // Pitch compares numerically for package rows (formatted text would order
+        // 10.000 before 2.000); usage child rows keep their PartName comparison.
+        pitchColumn.CompareAscending = (a, b) => ComparePitch(a, b);
+        pitchColumn.CompareDescending = (a, b) => ComparePitch(b, a);
         SetNumericSort(pinCountColumn, m => (m as PackageRowViewModel)?.PinCount);
         SetStringSort(dimensionsColumn, m => (m as PackageRowViewModel)?.Dimensions);
     }
+
+    private static int ComparePitch(object? a, object? b) => (a, b) switch
+    {
+        (PackageRowViewModel x, PackageRowViewModel y) => Nullable.Compare(x.Pitch, y.Pitch),
+        (PackageUsageRowViewModel x, PackageUsageRowViewModel y) =>
+            string.Compare(x.PartName, y.PartName, StringComparison.OrdinalIgnoreCase),
+        (PackageRowViewModel, PackageUsageRowViewModel) => -1,
+        (PackageUsageRowViewModel, PackageRowViewModel) => 1,
+        _ => 0,
+    };
 
     private static void SetStringSort(TreeDataGridColumn column, Func<object?, string?> selector)
     {

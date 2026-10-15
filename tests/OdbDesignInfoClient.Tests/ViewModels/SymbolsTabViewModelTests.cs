@@ -123,7 +123,7 @@ public class SymbolsTabViewModelTests
         _sut.FilterText = "drill";
 
         // Assert (debounced - poll until applied, bounded to ~5 s)
-        for (var i = 0; i < 100 && _sut.Symbols.Count != 1 && i < 100; i++)
+        for (var i = 0; i < 100 && _sut.Symbols.Count != 1; i++)
         {
             await Task.Delay(50);
         }

@@ -13,7 +13,8 @@
             <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
         </DataTemplate>
         <DataTemplate x:Key="PackagePitchCell" x:DataType="vm:PackageRowViewModel">
-            <TextBlock Text="{Binding Pitch, StringFormat={}{0:F3}}" VerticalAlignment="Center"/>
+            <!-- PitchDisplay renders "n/a" for designs that declare no pitch -->
+            <TextBlock Text="{Binding PitchDisplay}" VerticalAlignment="Center"/>
         </DataTemplate>
         <DataTemplate x:Key="PackagePinCountCell" x:DataType="vm:PackageRowViewModel">
             <TextBlock Text="{Binding PinCount}" VerticalAlignment="Center"/>

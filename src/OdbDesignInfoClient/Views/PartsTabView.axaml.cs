@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using System.ComponentModel;
 using System.Linq;
 using Avalonia.Controls;
@@ -100,8 +99,11 @@ public partial class PartsTabView : UserControl
             return;
         }
 
-        var modelIndex = FindModelIndex(target);
-        if (modelIndex < 0)
+        // SelectedIndex addresses the grid's flat row list (roots plus expanded
+        // children), not the root ItemsSource — the two spaces only coincide while
+        // no row above the target is expanded, so resolve the index via Source.Rows.
+        var rowIndex = FindRowIndex(target);
+        if (rowIndex < 0)
         {
             return;
         }
@@ -109,7 +111,7 @@ public partial class PartsTabView : UserControl
         _isSyncingSelection = true;
         try
         {
-            selection.SelectedIndex = new IndexPath(modelIndex);
+            selection.SelectedIndex = new IndexPath(rowIndex);
         }
         finally
         {
@@ -117,42 +119,30 @@ public partial class PartsTabView : UserControl
         }
 
         // Rows realize asynchronously; bring the row into view once layout has settled.
-        Dispatcher.UIThread.Post(() => BringModelIntoView(target), DispatcherPriority.Loaded);
+        Dispatcher.UIThread.Post(() => PartGrid.RowsPresenter?.BringIntoView(rowIndex), DispatcherPriority.Loaded);
     }
 
-    private int FindModelIndex(PartRowViewModel part)
-    {
-        if (PartGrid.ItemsSource is not IList items)
-        {
-            return -1;
-        }
-
-        for (var i = 0; i < items.Count; ++i)
-        {
-            if (ReferenceEquals(items[i], part))
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    private void BringModelIntoView(PartRowViewModel part)
+    /// <summary>
+    /// Finds the target row's index in the flat row list (roots plus expanded children)
+    /// — the index space <see cref="TreeDataGridRowSelection.SelectedIndex"/> and
+    /// <see cref="TreeDataGrid.RowsPresenter"/> address.
+    /// </summary>
+    private int FindRowIndex(PartRowViewModel part)
     {
         if (PartGrid.Source?.Rows is not { } rows)
         {
-            return;
+            return -1;
         }
 
         for (var i = 0; i < rows.Count; ++i)
         {
             if (ReferenceEquals(rows[i].Model, part))
             {
-                PartGrid.RowsPresenter?.BringIntoView(i);
-                return;
+                return i;
             }
         }
+
+        return -1;
     }
 
     /// <summary>

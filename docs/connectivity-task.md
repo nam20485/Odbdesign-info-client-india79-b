@@ -14,8 +14,19 @@ fixes. Design reads currently go through `src/OdbDesignInfoClient.Services/Api/I
 `src/OdbDesign.ProductModel/OdbDesign.ProductModel.csproj` (`Protobuf` items from `:32`).
 So the transport exists; the read path just doesn't use it.
 
-Sequence: switch the read path → delete the `Api/Dtos/` shapes it makes dead → do not grow
-them. Verify with `dotnet build` and the existing test suite.
+**Transitional exception (recorded 2026-10-14, parity-rebuild PR #22):** ahead of this
+transport switch, the client added REST reads for `matrix/matrix`, `steps/{step}/stephdr`,
+and `steps/{step}/eda_data` (existing server routes), plus the hand-mirrored
+`Api/Dtos/MatrixDto.cs` — the parity rebuild needed authoritative stackup/EDA values
+before the switch landed. These are transitional and move with the rest of Part A:
+the already-downloaded gRPC `Design.FileModel` carries all three sources
+(`FileArchive.matrixFile`, `StepDirectory.stephdrfile`, `StepDirectory.edatafile`), so
+the F3 switch replaces these routes and deletes `MatrixDto` rather than growing the set
+further. No other `Api/Dtos/` growth is permitted in the meantime.
+
+Sequence: switch the read path → delete the `Api/Dtos/` shapes it makes dead (including
+`MatrixDto` and the stephdr/eda_data REST routes above) → do not grow them. Verify with
+`dotnet build` and the existing test suite.
 
 ## Part B — refresh vendored protos
 

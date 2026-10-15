@@ -139,17 +139,21 @@ public class MainViewModelTests
         await WaitUntilAsync(() => _mockDesignService.Invocations
             .Any(i => i.Method.Name == nameof(IDesignService.GetNetsAsync)));
 
-        // Act - switch step, then revisit the Nets tab
+        // Act - leave the Nets tab, then switch step (only the active tab reloads,
+        // so this is an actual revisit scenario for the Nets guard), then return:
+        // the guard must key on (design, step) and reload for the new step
+        _sut.SelectedTabIndex = 0;
         _sut.SelectedStep = "panel";
         _sut.SelectedTabIndex = 1;
-        await WaitUntilAsync(() => _mockDesignService.Invocations
-            .Count(i => i.Method.Name == nameof(IDesignService.GetNetsAsync) &&
-                i.Arguments[1] as string == "panel") >= 1);
+        Assert.True(await WaitUntilAsync(() => _mockDesignService.Invocations
+            .Any(i => i.Method.Name == nameof(IDesignService.GetNetsAsync) &&
+                i.Arguments[1] as string == "panel")),
+            "Nets tab must reload on revisit after the step changed");
 
-        // Assert - Nets reloaded because its load-once guard keys on (design, step)
+        // Assert - the revisit (not the step-change reload) produced the call
         _mockDesignService.Verify(
             x => x.GetNetsAsync("design-1", "panel", It.IsAny<CancellationToken>()),
-            Times.AtLeastOnce);
+            Times.Once);
     }
 
     [Fact]
@@ -197,12 +201,17 @@ public class MainViewModelTests
         Assert.Equal("panel", _sut.SelectedStep);
     }
 
-    /// <summary>Polls until the condition holds, bounded to ~5 s (fire-and-forget loads).</summary>
-    private static async Task WaitUntilAsync(Func<bool> condition)
+    /// <summary>
+    /// Polls until the condition holds, bounded to ~5 s (fire-and-forget loads).
+    /// Returns whether the condition was met, so callers can assert on timeout.
+    /// </summary>
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition)
     {
         for (var i = 0; i < 100 && !condition(); i++)
         {
             await Task.Delay(50);
         }
+
+        return condition();
     }
 }

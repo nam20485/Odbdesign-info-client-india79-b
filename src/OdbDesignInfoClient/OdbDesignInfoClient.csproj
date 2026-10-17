@@ -24,6 +24,10 @@
     <PackageReference Include="Avalonia.Fonts.Inter" Version="12.0.3" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.0.0" />
 
+    <!-- MIT-licensed TreeDataGrid fork (wieslawsoltes/TreeDataGrid), compatible with Avalonia 12 -->
+    <PackageReference Include="TreeDataGrid.Core" Version="12.0.0.7" />
+    <PackageReference Include="TreeDataGrid.Controls.Avalonia" Version="12.0.0.7" />
+
     <!--Condition below is needed to remove Avalonia.Diagnostics package from publish in Release configuration.-->
     <PackageReference Condition="'$(Configuration)' == 'Debug'" Include="Avalonia.Diagnostics" Version="11.3.16" />
 

@@ -7,7 +7,7 @@
              x:Class="OdbDesignInfoClient.Views.StackupTabView"
              x:DataType="vm:StackupTabViewModel">
 
-    <Grid RowDefinitions="Auto,*,Auto">
+    <Grid RowDefinitions="Auto,Auto,*,Auto">
         <!-- Header -->
         <Border Grid.Row="0" Padding="8" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <Grid ColumnDefinitions="*,Auto">
@@ -22,8 +22,21 @@
             </Grid>
         </Border>
 
+        <!-- Error Banner -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding HasError}"
+                Background="#33F44336"
+                BorderBrush="#FFF44336"
+                BorderThickness="0,0,0,1"
+                Padding="8,4"
+                ZIndex="99">
+            <TextBlock Text="{Binding ErrorMessage}" Foreground="#FFF44336" TextWrapping="Wrap"/>
+        </Border>
+
+
+
         <!-- Loading Overlay -->
-        <Border Grid.Row="1" 
+        <Border Grid.Row="2" 
                 IsVisible="{Binding IsLoading}"
                 Background="#80000000"
                 ZIndex="100">
@@ -37,44 +50,57 @@
         </Border>
 
         <!-- Layer List -->
-        <ScrollViewer Grid.Row="1" Padding="8">
+        <ScrollViewer Grid.Row="2" Padding="8">
             <ItemsControl ItemsSource="{Binding Layers}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:LayerRowViewModel}">
-                        <Border Margin="0,2" Padding="8" 
+                        <Border Margin="0,2" Padding="8"
                                 CornerRadius="4"
                                 Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
-                            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                            <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto">
+                                <!-- Stack Order -->
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding StackOrder}"
+                                           Width="28"
+                                           VerticalAlignment="Center"
+                                           Opacity="0.7"
+                                           FontSize="12"
+                                           Margin="0,0,4,0"/>
+
                                 <!-- Layer Color Indicator -->
-                                <Border Grid.Column="0" 
-                                        Width="24" Height="24" 
+                                <Border Grid.Column="1"
+                                        Width="24" Height="24"
                                         CornerRadius="4"
                                         Background="{Binding TypeColor}"
                                         Margin="0,0,8,0"/>
-                                
-                                <!-- Layer Name -->
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+
+                                <!-- Layer Name + Type / Drill span -->
+                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
                                     <TextBlock Text="{Binding Type}" FontSize="11" Opacity="0.7"/>
+                                    <TextBlock Text="{Binding DrillSpan}"
+                                               FontSize="11"
+                                               Opacity="0.7"
+                                               IsVisible="{Binding HasDrillSpan}"/>
                                 </StackPanel>
-                                
+
                                 <!-- Polarity -->
-                                <TextBlock Grid.Column="2" 
+                                <TextBlock Grid.Column="3"
                                            Text="{Binding Polarity}"
                                            VerticalAlignment="Center"
-                                           Width="80"/>
-                                
+                                           Width="70"/>
+
                                 <!-- Material -->
-                                <TextBlock Grid.Column="3" 
+                                <TextBlock Grid.Column="4"
                                            Text="{Binding Material}"
                                            VerticalAlignment="Center"
-                                           Width="100"/>
-                                
+                                           Width="90"/>
+
                                 <!-- Thickness -->
-                                <TextBlock Grid.Column="4" 
-                                           Text="{Binding Thickness, StringFormat={}{0:F3} mm}"
+                                <TextBlock Grid.Column="5"
+                                           Text="{Binding Thickness}"
                                            VerticalAlignment="Center"
-                                           Width="80"
+                                           Width="70"
                                            HorizontalAlignment="Right"/>
                             </Grid>
                         </Border>
@@ -84,7 +110,7 @@
         </ScrollViewer>
 
         <!-- Status Bar -->
-        <Border Grid.Row="2" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
+        <Border Grid.Row="3" Padding="8,4" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}">
             <TextBlock>
                 <Run Text="Total: "/>
                 <Run Text="{Binding TotalLayers}"/>

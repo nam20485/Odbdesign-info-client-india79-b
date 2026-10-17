@@ -419,6 +419,9 @@ FodyWeavers.xsd
 
 gha-creds-*.json
 
+# JetBrains Rider / IntelliJ IDEA
+.idea/
+
 # Docker validation artifacts
 docker/validation/logs/
 docker/validation/results.jsonl

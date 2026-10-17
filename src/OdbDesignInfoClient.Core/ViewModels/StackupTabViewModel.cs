@@ -27,6 +27,8 @@ public partial class StackupTabViewModel : ViewModelBase
 
     private string? _currentDesignId;
     private string? _currentStepName;
+    private string? _loadedDesignId;
+    private string? _loadedStepName;
 
     /// <summary>
     /// Initializes a new instance of StackupTabViewModel.
@@ -38,16 +40,22 @@ public partial class StackupTabViewModel : ViewModelBase
 
     /// <summary>
     /// Loads the layer stackup for the specified design and step.
+    /// Loads once per design/step; repeat activations reuse the in-memory data
+    /// unless <paramref name="forceReload"/> is set (Refresh command).
     /// </summary>
-    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default)
+    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default, bool forceReload = false)
     {
         if (string.IsNullOrEmpty(designId) || string.IsNullOrEmpty(stepName))
+            return;
+
+        if (!forceReload && _loadedDesignId == designId && _loadedStepName == stepName)
             return;
 
         _currentDesignId = designId;
         _currentStepName = stepName;
 
         IsLoading = true;
+        ClearError();
         try
         {
             var layers = await _designService.GetStackupAsync(designId, stepName, cancellationToken);
@@ -59,6 +67,20 @@ public partial class StackupTabViewModel : ViewModelBase
             }
 
             TotalLayers = Layers.Count;
+            _loadedDesignId = designId;
+            _loadedStepName = stepName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            SetError("Authentication failed (401). Set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD and restart.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Failed to load stackup: {ex.Message}");
         }
         finally
         {
@@ -74,7 +96,7 @@ public partial class StackupTabViewModel : ViewModelBase
     {
         if (_currentDesignId != null && _currentStepName != null)
         {
-            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken);
+            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
     }
 }
@@ -86,26 +108,40 @@ public partial class LayerRowViewModel : ObservableObject
 {
     private readonly Layer _layer;
 
+    /// <summary>Gets the layer identifier.</summary>
     public int Id => _layer.Id;
-    public string Name => _layer.Name;
-    public string Type => _layer.Type;
-    public string Polarity => _layer.Polarity;
-    public double Thickness => _layer.Thickness;
-    public string Material => _layer.Material;
 
-    /// <summary>
-    /// Gets a display color based on layer type.
-    /// </summary>
-    public string TypeColor => _layer.Type switch
-    {
-        "Signal" => "#4CAF50",
-        "Power" => "#F44336",
-        "Dielectric" => "#FFC107",
-        "Drill" => "#9C27B0",
-        "SolderMask" => "#2196F3",
-        "SilkScreen" => "#FFFFFF",
-        _ => "#808080"
-    };
+    /// <summary>Gets the 1-based physical stack order.</summary>
+    public int StackOrder => _layer.StackOrder;
+
+    /// <summary>Gets the layer name.</summary>
+    public string Name => _layer.Name;
+
+    /// <summary>Gets the layer type (server-authoritative).</summary>
+    public string Type => _layer.Type;
+
+    /// <summary>Gets the layer polarity, or a placeholder when the server does not report it.</summary>
+    public string Polarity => string.IsNullOrEmpty(_layer.Polarity) ? "—" : _layer.Polarity;
+
+    /// <summary>Gets the thickness in millimeters, or a placeholder when unavailable.</summary>
+    public string Thickness => _layer.Thickness.HasValue
+        ? string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:F3} mm", _layer.Thickness)
+        : "—";
+
+    /// <summary>Gets the material name, or a placeholder when unavailable.</summary>
+    public string Material => string.IsNullOrEmpty(_layer.Material) ? "—" : _layer.Material;
+
+    /// <summary>Gets the display color (server value or type-based default) as a hex string.</summary>
+    public string TypeColor => string.IsNullOrEmpty(_layer.ColorHex) ? "#808080" : _layer.ColorHex;
+
+    /// <summary>Gets the drill span text (e.g. "LAYER-1 → LAYER-8"), or empty for non-drill layers.</summary>
+    public string DrillSpan =>
+        !string.IsNullOrEmpty(_layer.StartLayer) && !string.IsNullOrEmpty(_layer.EndLayer)
+            ? $"{_layer.StartLayer} → {_layer.EndLayer}"
+            : string.Empty;
+
+    /// <summary>Gets a value indicating whether this layer has a drill span to display.</summary>
+    public bool HasDrillSpan => !string.IsNullOrEmpty(DrillSpan);
 
     /// <summary>
     /// Initializes a new instance of LayerRowViewModel.
@@ -115,3 +151,4 @@ public partial class LayerRowViewModel : ObservableObject
         _layer = layer;
     }
 }
+

@@ -4,8 +4,17 @@ namespace OdbDesignInfoClient.Services.Api;
 
 /// <summary>
 /// Refit interface for OdbDesignServer REST API endpoints.
-/// Used for control plane operations (metadata, health checks, design discovery).
 /// </summary>
+/// <remarks>
+/// REST carries the control plane only (AGENTS.md §5: design discovery, metadata,
+/// health checks) and is Basic-authenticated. All design content reads (matrix, step
+/// headers, EDA data, symbols, components/nets/packages/parts/drill tools) go over
+/// gRPC via <see cref="IOdbDesignGrpcClient"/> — the server's derived-data contract
+/// is gRPC-only and REST is frozen at security fixes (handoff §5b, decision D5).
+/// The step-name list stays here because gRPC offers no cheap equivalent: the only
+/// design-wide rpc (<c>GetDesign</c>) downloads the full file model, which is
+/// prohibitive for list views.
+/// </remarks>
 public interface IOdbDesignRestApi
 {
     /// <summary>
@@ -15,58 +24,10 @@ public interface IOdbDesignRestApi
     Task<ApiResponse<string>> GetDesignNamesAsync(CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Gets the full design details including steps, layers, and symbols.
-    /// </summary>
-    [Get("/filemodels/{name}")]
-    Task<ApiResponse<string>> GetDesignAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
     /// Gets the list of steps for a design.
     /// </summary>
     [Get("/filemodels/{name}/steps")]
     Task<ApiResponse<string>> GetStepsAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the list of layers for a step.
-    /// </summary>
-    [Get("/filemodels/{name}/steps/{step}/layers")]
-    Task<ApiResponse<string>> GetLayerNamesAsync(string name, string step, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the list of symbols for a design.
-    /// </summary>
-    [Get("/filemodels/{name}/symbols")]
-    Task<ApiResponse<string>> GetSymbolNamesAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the components for a design.
-    /// </summary>
-    [Get("/designs/{name}/components")]
-    Task<ApiResponse<string>> GetComponentsAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the nets for a design.
-    /// </summary>
-    [Get("/designs/{name}/nets")]
-    Task<ApiResponse<string>> GetNetsAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the parts for a design.
-    /// </summary>
-    [Get("/designs/{name}/parts")]
-    Task<ApiResponse<string>> GetPartsAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the packages for a design.
-    /// </summary>
-    [Get("/designs/{name}/packages")]
-    Task<ApiResponse<string>> GetPackagesAsync(string name, CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Gets the drill tools for a design.
-    /// </summary>
-    [Get("/designs/{name}/drilltools")]
-    Task<ApiResponse<string>> GetDrillToolsAsync(string name, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Liveness health check endpoint.

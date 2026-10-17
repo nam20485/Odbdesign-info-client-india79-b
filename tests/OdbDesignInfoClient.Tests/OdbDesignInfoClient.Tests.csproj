@@ -17,6 +17,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- M3.3 conformance harness test data: server golden + captured protobufs
+         (see TestData/Connectivity/README.md). The SDK's default globbing already
+         includes these as None items; Update attaches the copy metadata. -->
+    <None Update="TestData\Connectivity\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
     <PackageReference Include="xunit" Version="$(XunitVersion)" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">

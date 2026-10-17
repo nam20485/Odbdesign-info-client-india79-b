@@ -38,9 +38,21 @@ reconstructs collections from the FileModel.
 Policy (D7): the server owns the protos; clients receive updates as a push. No drift check
 exists or is planned — refreshing is a manual step, and `Connectivity` will arrive the same way.
 
-## Part C — conformance test (blocked until server PR #595 merges)
+## Part C — conformance test — DONE (F2, unblocked by server PR #595 merging 2026-09-27)
 
-Same as the 3D client: compare against `sample_design` goldens only; respect `"fidelity"`.
+Implemented as `tests/OdbDesignInfoClient.Tests/ProductModel/ProductModelConformanceTests.cs`
+over `TestData/Connectivity/sample_design/` (public-domain design only): the server
+golden plus captured server protobufs (the step's `comp_+_top`/`comp_+_bot`
+ComponentsFiles and eda/data EdaDataFile, sha256-pinned by the manifest) are
+reassembled into the gRPC `Design.FileModel` shape and read through the production
+`ProductModelReader`. Pins the refDes → (pin, net) view (pin rows, net-tab edges,
+per-component net summaries) to the golden, respects `"fidelity"` via the golden's
+net-name coverage, asserts the view is bit-identical when `ComponentRecord.Id` is
+populated from the golden's real UIDs (handoff §6 landmine), and that refDes lookup
+stays case-significant. The zero-connectivity (§8b) and sampled-fidelity controls
+live in the 3D client's harness, which shares this builder through
+`src/OdbDesign.ProductModel`. See `TestData/Connectivity/README.md` for provenance
+and recapture.
 
 ## Do not
 Same three prohibitions as the 3D client: no cross-collection reference resolution beyond

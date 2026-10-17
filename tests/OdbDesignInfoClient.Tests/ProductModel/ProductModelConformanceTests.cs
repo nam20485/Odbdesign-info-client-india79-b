@@ -110,10 +110,14 @@ public class ProductModelConformanceTests
     public void CaptureManifest_MatchesCommittedBytes()
     {
         // Guard the fixtures against silent corruption: the manifest's sha256 pins
-        // the exact captured bytes the conformance runs over.
+        // the exact captured bytes the conformance runs over, and its provenance
+        // fields must agree with the golden it is paired with.
         var manifest = Fixture.Manifest;
+        var golden = Fixture.Golden;
         var dir = Path.Combine(AppContext.BaseDirectory, "TestData", "Connectivity", manifest.Slug);
 
+        Assert.Equal(golden.Design, manifest.DesignName);
+        Assert.Equal(golden.Step, manifest.Step);
         Assert.Equal(manifest.Sha256TopComponents, Sha256Of(Path.Combine(dir, "top-components.binpb")));
         Assert.Equal(manifest.Sha256BottomComponents, Sha256Of(Path.Combine(dir, "bottom-components.binpb")));
         Assert.Equal(manifest.Sha256EdaData, Sha256Of(Path.Combine(dir, "eda-data.binpb")));

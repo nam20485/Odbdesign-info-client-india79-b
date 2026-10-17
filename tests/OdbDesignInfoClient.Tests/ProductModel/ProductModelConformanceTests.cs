@@ -39,15 +39,23 @@ public class ProductModelConformanceTests
         };
 
     /// <summary>
-    /// The builder's display rule: an unnamed NET record falls back to "#<ordinal>";
-    /// the client never surfaces an empty name for a connected pin. Names are opaque
+    /// The builder's display rule for the net tab and per-component summaries: an
+    /// unnamed NET record shows as "#<index>". Pin rows resolve names through the
+    /// builder's net-number lookup, which skips unnamed records — so a pin on an
+    /// unnamed net carries a null name, never a fabricated one. Names are opaque
     /// strings — "$NONE$" included — and never branched on.
     /// </summary>
-    private static string ExpectedNetName(ConnectivityGolden golden, int netOrdinal)
+    private static string ExpectedNetDisplayName(ConnectivityGolden golden, int netOrdinal)
     {
         var name = golden.Nets[netOrdinal].Name;
         return string.IsNullOrEmpty(name) ? $"#{netOrdinal}" : name;
     }
+
+    /// <summary>The pin-level expectation: null when the golden net is unnamed.</summary>
+    private static string? ExpectedPinNetName(ConnectivityGolden golden, int netOrdinal) =>
+        string.IsNullOrEmpty(golden.Nets[netOrdinal].Name)
+            ? null
+            : golden.Nets[netOrdinal].Name;
 
     private static string ConnectionSignature(OdbDesign.ProductModel.Models.NetConnection connection) =>
         $"{connection.Side}|{connection.ComponentName}|{connection.PinNumber}";
@@ -103,6 +111,20 @@ public class ProductModelConformanceTests
         {
             Assert.True(golden.Nets[i].Ordinal == i,
                 $"net {i}'s roster position must equal its ordinal (got {golden.Nets[i].Ordinal})");
+        }
+
+        // Harness assumption on the capture: every NET record's index field equals
+        // its list ordinal (the manifest pins "index==ordinal on 644"). The builder's
+        // "#<Index>" display fallback and the net-number name lookup both key on the
+        // index field, while the golden keys on the ordinal — a recapture that breaks
+        // this invariant must fail here, loudly, rather than as a false conformance
+        // diff downstream.
+        var edaNets = Fixture.EdaData.NetRecords;
+        Assert.Equal(golden.Aggregates.NetsTotal, edaNets.Count);
+        for (var i = 0; i < edaNets.Count; i++)
+        {
+            Assert.True(edaNets[i].Index == (uint)i,
+                $"eda/data NET record {i} carries index {edaNets[i].Index} — the harness assumes index == ordinal");
         }
     }
 
@@ -206,9 +228,13 @@ public class ProductModelConformanceTests
                         mismatches.Add($"{where}: netNumber {pin.NetNumber} != golden ordinal {netOrdinal}");
                     }
 
-                    if (netOrdinal < golden.NetNameCoverage && pin.NetName != ExpectedNetName(golden, netOrdinal))
+                    if (netOrdinal < golden.NetNameCoverage)
                     {
-                        mismatches.Add($"{where}: net '{pin.NetName}' != golden '{ExpectedNetName(golden, netOrdinal)}'");
+                        var expectedNetName = ExpectedPinNetName(golden, netOrdinal);
+                        if (pin.NetName != expectedNetName)
+                        {
+                            mismatches.Add($"{where}: net '{pin.NetName}' != golden '{expectedNetName}'");
+                        }
                     }
                 }
                 else if (pin.NetName != null)
@@ -247,7 +273,7 @@ public class ProductModelConformanceTests
                 .ToList();
 
             var detail = model.Nets[net.Ordinal];
-            Assert.Equal(ExpectedNetName(golden, net.Ordinal), detail.Name);
+            Assert.Equal(ExpectedNetDisplayName(golden, net.Ordinal), detail.Name);
             var actual = detail.Connections.Select(ConnectionSignature).OrderBy(s => s).ToList();
             totalConnections += actual.Count;
 
@@ -272,7 +298,7 @@ public class ProductModelConformanceTests
             var expected = component.Pins
                 .Where(p => p.NetOrdinal.HasValue)
                 .GroupBy(p => p.NetOrdinal!.Value)
-                .Select(g => (Index: (uint)g.Key, PinCount: g.Count(), Name: ExpectedNetName(golden, g.Key)))
+                .Select(g => (Index: (uint)g.Key, PinCount: g.Count(), Name: ExpectedNetDisplayName(golden, g.Key)))
                 .OrderBy(r => r.Index)
                 .ToList();
 
@@ -303,7 +329,15 @@ public class ProductModelConformanceTests
     {
         // Full-connectivity control (design doc §4.2): every one of the 2,811 pins
         // is connected — verified from the view, not just the golden's own counts.
+        // The name-resolution half holds because every golden net of this design is
+        // named; the precondition makes that explicit so a future golden with
+        // unnamed covered nets fails here with a clear reason instead of a
+        // confusing under-count.
         var fixture = Fixture;
+        Assert.All(
+            fixture.Golden.Nets.Take(fixture.Golden.NetNameCoverage),
+            net => Assert.False(string.IsNullOrEmpty(net.Name),
+                "this control requires every covered net to be named"));
 
         Assert.True(
             fixture.Model.Components.Sum(c => c.Pins.Count(p => p.NetName != null)) == fixture.Golden.Aggregates.PinsTotal,
@@ -372,8 +406,11 @@ public class ProductModelConformanceTests
     {
         // Spec p.152: refDes case is significant (handoff §8a). With no
         // case-variant refDes in this design, a case-folded probe missing is
-        // exactly the ordinal behaviour the identity model requires.
-        var probe = Fixture.Golden.Components.First(c => c.RefDes.Any(char.IsLetter)).RefDes;
+        // exactly the ordinal behaviour the identity model requires. The probe
+        // must itself contain uppercase, or the fold probe says nothing.
+        var probe = Fixture.Golden.Components
+            .Select(c => c.RefDes)
+            .First(r => r != r.ToLowerInvariant());
 
         Assert.True(Fixture.Index.ByName.ContainsKey(probe), "the exact refDes must hit");
         Assert.False(Fixture.Index.ByName.ContainsKey(probe.ToLowerInvariant()),

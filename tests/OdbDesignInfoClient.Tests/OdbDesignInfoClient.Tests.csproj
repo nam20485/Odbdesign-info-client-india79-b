@@ -18,8 +18,9 @@
 
   <ItemGroup>
     <!-- M3.3 conformance harness test data: server golden + captured protobufs
-         (see TestData/Connectivity/README.md). Copied verbatim to output. -->
-    <None Include="TestData\Connectivity\**\*" CopyToOutputDirectory="PreserveNewest" />
+         (see TestData/Connectivity/README.md). The SDK's default globbing already
+         includes these as None items; Update attaches the copy metadata. -->
+    <None Update="TestData\Connectivity\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

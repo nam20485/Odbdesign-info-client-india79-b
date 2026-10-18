@@ -11,17 +11,27 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\OdbDesignInfoClient.Core\OdbDesignInfoClient.Core.csproj" />
     <ProjectReference Include="..\..\src\OdbDesignInfoClient.Services\OdbDesignInfoClient.Services.csproj" />
+    <!-- Direct reference: the ProductModel tests construct Odb.Lib.Protobuf /
+         OdbDesign.ProductModel types directly, not just via Services. -->
+    <ProjectReference Include="..\..\src\OdbDesign.ProductModel\OdbDesign.ProductModel.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <!-- M3.3 conformance harness test data: server golden + captured protobufs
+         (see TestData/Connectivity/README.md). The SDK's default globbing already
+         includes these as None items; Update attaches the copy metadata. -->
+    <None Update="TestData\Connectivity\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.5.1" />
     <PackageReference Include="xunit" Version="$(XunitVersion)" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.0.2">
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
     <PackageReference Include="Moq" Version="$(MoqVersion)" />
-    <PackageReference Include="coverlet.collector" Version="6.0.4">
+    <PackageReference Include="coverlet.collector" Version="10.0.1">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>

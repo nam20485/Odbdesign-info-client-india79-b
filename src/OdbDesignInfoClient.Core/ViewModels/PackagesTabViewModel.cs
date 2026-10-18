@@ -34,6 +34,9 @@ public partial class PackagesTabViewModel : ViewModelBase
     private List<PackageRowViewModel> _allPackages = [];
     private string? _currentDesignId;
     private string? _currentStepName;
+    private string? _loadedDesignId;
+    private string? _loadedStepName;
+    private CancellationTokenSource? _filterDebounceCts;
 
     /// <summary>
     /// Initializes a new instance of PackagesTabViewModel.
@@ -46,16 +49,22 @@ public partial class PackagesTabViewModel : ViewModelBase
 
     /// <summary>
     /// Loads packages for the specified design and step.
+    /// Loads once per design/step; repeat activations reuse the in-memory data
+    /// unless <paramref name="forceReload"/> is set (Refresh command).
     /// </summary>
-    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default)
+    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default, bool forceReload = false)
     {
         if (string.IsNullOrEmpty(designId) || string.IsNullOrEmpty(stepName))
+            return;
+
+        if (!forceReload && _loadedDesignId == designId && _loadedStepName == stepName)
             return;
 
         _currentDesignId = designId;
         _currentStepName = stepName;
 
         IsLoading = true;
+        ClearError();
         try
         {
             var packages = await _designService.GetPackagesAsync(designId, stepName, cancellationToken);
@@ -63,18 +72,43 @@ public partial class PackagesTabViewModel : ViewModelBase
 
             foreach (var package in packages)
             {
-                _allPackages.Add(new PackageRowViewModel
+                var row = new PackageRowViewModel
                 {
                     Name = package.Name,
                     Pitch = package.Pitch,
                     PinCount = package.PinCount,
                     Width = package.Width,
                     Height = package.Height
-                });
+                };
+
+                foreach (var usage in package.Usages)
+                {
+                    row.Usages.Add(new PackageUsageRowViewModel(_navigationService)
+                    {
+                        ComponentRefDes = usage.ComponentRefDes,
+                        PartName = usage.PartName ?? string.Empty
+                    });
+                }
+
+                _allPackages.Add(row);
             }
 
             TotalCount = _allPackages.Count;
             ApplyFilter();
+            _loadedDesignId = designId;
+            _loadedStepName = stepName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            SetError("Authentication failed (401). Set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD and restart.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Failed to load packages: {ex.Message}");
         }
         finally
         {
@@ -90,13 +124,43 @@ public partial class PackagesTabViewModel : ViewModelBase
     {
         if (_currentDesignId != null && _currentStepName != null)
         {
-            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken);
+            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
+    }
+
+    /// <summary>
+    /// Clears the filter immediately, bypassing the input debounce.
+    /// </summary>
+    [RelayCommand]
+    private void ClearFilter()
+    {
+        // Setting the property reschedules the debounce; cancel it so the
+        // cleared filter applies right away instead of 300 ms later.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
     }
 
     partial void OnFilterTextChanged(string value)
     {
-        ApplyFilter();
+        // Debounced: don't rebuild the row collection on every keystroke
+        _filterDebounceCts?.Cancel();
+        _filterDebounceCts?.Dispose();
+        _filterDebounceCts = new CancellationTokenSource();
+        _ = DebouncedApplyFilterAsync(_filterDebounceCts.Token);
+    }
+
+    private async Task DebouncedApplyFilterAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(300, cancellationToken);
+            ApplyFilter();
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer keystroke
+        }
     }
 
     private void ApplyFilter()
@@ -126,7 +190,7 @@ public partial class PackageRowViewModel : ObservableObject
     private string _name = string.Empty;
 
     [ObservableProperty]
-    private double _pitch;
+    private double? _pitch;
 
     [ObservableProperty]
     private int _pinCount;
@@ -147,6 +211,11 @@ public partial class PackageRowViewModel : ObservableObject
     /// Gets the dimensions as a formatted string.
     /// </summary>
     public string Dimensions => $"{Width:F2} x {Height:F2}";
+
+    /// <summary>
+    /// Gets the pitch formatted for display; "n/a" when the design declares none.
+    /// </summary>
+    public string PitchDisplay => Pitch?.ToString("F3") ?? "n/a";
 }
 
 /// <summary>

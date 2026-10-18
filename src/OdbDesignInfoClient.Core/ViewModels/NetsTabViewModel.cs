@@ -36,6 +36,9 @@ public partial class NetsTabViewModel : ViewModelBase
     private IReadOnlyList<Net> _allNets = [];
     private string? _currentDesignId;
     private string? _currentStepName;
+    private string? _loadedDesignId;
+    private string? _loadedStepName;
+    private CancellationTokenSource? _filterDebounceCts;
 
     /// <summary>
     /// Initializes a new instance of NetsTabViewModel.
@@ -52,21 +55,41 @@ public partial class NetsTabViewModel : ViewModelBase
 
     /// <summary>
     /// Loads nets for the specified design and step.
+    /// Loads once per design/step; repeat activations reuse the in-memory data
+    /// unless <paramref name="forceReload"/> is set (Refresh command).
     /// </summary>
-    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default)
+    public async Task LoadAsync(string designId, string stepName, CancellationToken cancellationToken = default, bool forceReload = false)
     {
         if (string.IsNullOrEmpty(designId) || string.IsNullOrEmpty(stepName))
+            return;
+
+        if (!forceReload && _loadedDesignId == designId && _loadedStepName == stepName)
             return;
 
         _currentDesignId = designId;
         _currentStepName = stepName;
 
         IsLoading = true;
+        ClearError();
         try
         {
             _allNets = await _designService.GetNetsAsync(designId, stepName, cancellationToken);
             TotalCount = _allNets.Count;
             ApplyFilter();
+            _loadedDesignId = designId;
+            _loadedStepName = stepName;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            SetError("Authentication failed (401). Set ODBDESIGN_REST_USERNAME / ODBDESIGN_REST_PASSWORD and restart.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Failed to load nets: {ex.Message}");
         }
         finally
         {
@@ -82,13 +105,43 @@ public partial class NetsTabViewModel : ViewModelBase
     {
         if (_currentDesignId != null && _currentStepName != null)
         {
-            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken);
+            await LoadAsync(_currentDesignId, _currentStepName, cancellationToken, forceReload: true);
         }
+    }
+
+    /// <summary>
+    /// Clears the filter immediately, bypassing the input debounce.
+    /// </summary>
+    [RelayCommand]
+    private void ClearFilter()
+    {
+        // Setting the property reschedules the debounce; cancel it so the
+        // cleared filter applies right away instead of 300 ms later.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
     }
 
     partial void OnFilterTextChanged(string value)
     {
-        ApplyFilter();
+        // Debounced: don't rebuild the row collection on every keystroke
+        _filterDebounceCts?.Cancel();
+        _filterDebounceCts?.Dispose();
+        _filterDebounceCts = new CancellationTokenSource();
+        _ = DebouncedApplyFilterAsync(_filterDebounceCts.Token);
+    }
+
+    private async Task DebouncedApplyFilterAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(300, cancellationToken);
+            ApplyFilter();
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer keystroke
+        }
     }
 
     partial void OnSelectedNetChanged(NetRowViewModel? value)
@@ -131,15 +184,25 @@ public partial class NetsTabViewModel : ViewModelBase
 
     /// <summary>
     /// Navigates to a specific net by name.
+    /// Deep-linking must not filter the list: any active filter is cleared
+    /// immediately, then the target row is selected, expanded (opening its
+    /// feature children), and scrolled into view by the view's selection sync.
     /// </summary>
     public void NavigateToNet(string netName)
     {
-        FilterText = netName;
+        // Clearing the property schedules a debounced re-apply; cancel it and
+        // restore the unfiltered list right away. Unconditional, like ClearFilter:
+        // the debounce can still be pending from a just-cleared filter even when
+        // FilterText is already empty, and a filtered grid would drop the selection.
+        FilterText = string.Empty;
+        _filterDebounceCts?.Cancel();
+        ApplyFilter();
+
         var net = Nets.FirstOrDefault(n => n.Name.Equals(netName, StringComparison.OrdinalIgnoreCase));
         if (net != null)
         {
-            SelectedNet = net;
             net.IsExpanded = true;
+            SelectedNet = net;
         }
     }
 }

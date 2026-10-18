@@ -9,16 +9,16 @@
 
   <ItemGroup>
     <!-- MVVM Framework -->
-    <PackageReference Include="CommunityToolkit.Mvvm" Version="$(CommunityToolkitMvvmVersion)" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     
     <!-- Dependency Injection -->
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="$(MicrosoftExtensionsDIVersion)" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.8" />
     
     <!-- Logging Abstractions -->
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="$(MicrosoftExtensionsDIVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.8" />
     
     <!-- Resiliency -->
-    <PackageReference Include="Polly" Version="$(PollyVersion)" />
+    <PackageReference Include="Polly" Version="8.6.6" />
   </ItemGroup>
 
 </Project>

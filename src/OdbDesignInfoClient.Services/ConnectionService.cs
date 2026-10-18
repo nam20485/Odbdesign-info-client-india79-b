@@ -7,13 +7,14 @@ using OdbDesignInfoClient.Core.Services.Interfaces;
 using OdbDesignInfoClient.Services.Api;
 using Polly;
 using Polly.Retry;
+using ProtoDesign = Odb.Lib.Protobuf.ProductModel.Design;
 
 namespace OdbDesignInfoClient.Services;
 
 /// <summary>
 /// Implementation of the connection service with state machine pattern and health monitoring.
 /// </summary>
-public class ConnectionService : IConnectionService, IDisposable
+public class ConnectionService : IConnectionService, IOdbDesignGrpcClient, IDisposable
 {
     private readonly ILogger<ConnectionService>? _logger;
     private readonly IOdbDesignRestApi _restApi;
@@ -40,9 +41,31 @@ public class ConnectionService : IConnectionService, IDisposable
     public bool IsGrpcAvailable => _grpcAvailable;
 
     /// <summary>
-    /// Gets the gRPC client for direct access (used by DesignService).
+    /// Gets the gRPC client for direct access (used by the integration tests).
     /// </summary>
     public OdbDesignService.OdbDesignServiceClient? GrpcClient => _grpcClient;
+
+    /// <inheritdoc />
+    bool IOdbDesignGrpcClient.IsAvailable => _grpcAvailable;
+
+    /// <inheritdoc />
+    async Task<ProtoDesign?> IOdbDesignGrpcClient.GetDesignAsync(
+        string designName,
+        CancellationToken cancellationToken)
+    {
+        // Capture once: DisconnectAsync can tear the client down concurrently.
+        var client = _grpcClient;
+        if (!_grpcAvailable || client is null)
+        {
+            return null;
+        }
+
+        // include_normalized_lists stays deliberately unset: the normalized
+        // collections duplicate what the FileModel carries and dominate the
+        // response on connected boards; readers reconstruct them client-side.
+        var request = new GetDesignRequest { DesignName = designName };
+        return await client.GetDesignAsync(request, cancellationToken: cancellationToken);
+    }
 
     /// <inheritdoc />
     public event EventHandler<ConnectionState>? StateChanged;

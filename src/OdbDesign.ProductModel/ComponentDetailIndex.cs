@@ -4,25 +4,33 @@ using OdbDesign.ProductModel.Models;
 namespace OdbDesign.ProductModel;
 
 /// <summary>
-/// Result of building the product model for one design/step: the per-component detail
-/// lookup plus the full net list. Populated from the already-fetched components/EDA-data
-/// protobufs — no additional server round trips.
+/// Result of building the product model for one design/step from the server-owned
+/// <c>Connectivity</c> contract: the per-component detail lookup plus the full net
+/// list. Built from the single gRPC <c>GetDesign</c> response — no additional server
+/// round trips, and no client-side join (the pin→net truth is the server's; the
+/// client only groups and indexes what the contract publishes).
 /// </summary>
-/// <param name="ByKey">
-/// Components keyed on (board side, per-side ordinal) — the canonical netlist foreign
-/// key (eda_data <c>SubnetRecord.ComponentNumber</c>); one entry per component record.
-/// Proto <c>ComponentRecord.id</c> is never populated and is not a key.
+/// <param name="Components">
+/// Every placed component of the design, one row per <c>Connectivity.components</c>
+/// entry, in server order.
 /// </param>
-/// <param name="ByName">Components keyed on refDes (<c>CompName</c>), which is unique.</param>
-/// <param name="Nets">The full net list with toeprint connections.</param>
+/// <param name="ByRefDes">
+/// Components keyed on refDes (<c>Connectivity.components[].refDes</c> — the
+/// authoritative component key, spec p.152). The comparer is
+/// <see cref="StringComparer.Ordinal"/>: refDes case is significant, and a
+/// case-insensitive index would silently merge <c>R1</c>/<c>r1</c> on case-differing
+/// designs. Case-insensitive matching belongs to UI search filtering only
+/// (component-connectivity.md §8 hazard 3).
+/// </param>
+/// <param name="Nets">The full net list, one row per <c>Connectivity.nets</c> entry, with its members from <c>netMembers</c>.</param>
 public sealed record ComponentDetailIndex(
-    IReadOnlyDictionary<(BoardSide Side, uint Index), ComponentDetail> ByKey,
-    IReadOnlyDictionary<string, ComponentDetail> ByName,
+    IReadOnlyList<ComponentDetail> Components,
+    IReadOnlyDictionary<string, ComponentDetail> ByRefDes,
     IReadOnlyList<NetDetail> Nets)
 {
-    /// <summary>An empty index used when EDA data is absent.</summary>
+    /// <summary>An empty index used when the server carries no Connectivity block.</summary>
     public static readonly ComponentDetailIndex Empty = new(
-        new Dictionary<(BoardSide Side, uint Index), ComponentDetail>(),
+        Array.Empty<ComponentDetail>(),
         new Dictionary<string, ComponentDetail>(StringComparer.Ordinal),
         Array.Empty<NetDetail>());
 
@@ -46,7 +54,10 @@ public sealed record ComponentDetailIndex(
         return index;
     }
 
-    /// <summary>Finds a component detail by refDes name, or null.</summary>
-    public ComponentDetail? FindByName(string name) =>
-        ByName.TryGetValue(name, out var detail) ? detail : null;
+    /// <summary>
+    /// Finds a component detail by refDes (exact, case-sensitive match against the
+    /// server's refDes — the authoritative key), or null.
+    /// </summary>
+    public ComponentDetail? FindByRefDes(string refDes) =>
+        ByRefDes.TryGetValue(refDes, out var detail) ? detail : null;
 }

@@ -31,6 +31,7 @@
   <ItemGroup>
     <Protobuf Include="..\..\protoc\grpc\service.proto" GrpcServices="Client" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\design.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
+    <Protobuf Include="..\..\protoc\connectivity.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\featuresfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\symbolname.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\common.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />

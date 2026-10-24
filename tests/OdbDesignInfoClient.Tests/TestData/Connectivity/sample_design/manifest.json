@@ -7,5 +7,9 @@
   "sha256TopComponents": "0353b6450b1a3f477eaa507311a52ce320b0389a121ffb17ed09100e587c7f4f",
   "sha256BottomComponents": "b9dc17af351ef3d495c77687f9a410254da69c748c258eac379e31ae7bd4d91b",
   "sha256EdaData": "4493bc28ca32a40fc0901277cb63acf99f1884039c670a0b163b991129dbace0",
-  "diagnostics": "  components: 440 top \u002B 373 bottom | toeprints: 2811 | nets: 644 (index==ordinal on 644) | subnets: 9015 (2811 toeprint, 2811 with side) | id populated: 0"
+  "diagnostics": "  components: 440 top \u002B 373 bottom | toeprints: 2811 | nets: 644 (index==ordinal on 644) | subnets: 9015 (2811 toeprint, 2811 with side) | id populated: 0",
+  "connectivityCapturedUtc": "2026-10-24",
+  "connectivityEndpoint": "http://debian13vm.tail11ba79.ts.net:50051 (same k3s OdbDesignServer deployment as endpoint above, via tailnet name)",
+  "sha256Connectivity": "0f8be2f145d993d64a9a1ee8ca73b5bbb58fae7753fd0690e8c8a7f0d41bf395",
+  "connectivityDiagnostics": "  nets: 644 ($NONE$ named, dense) | packages: 71 | components: 813 (ids 813) | netMembers: 643 ($NONE$ excluded) | pins: 2811 = 2725 CONNECTED + 86 UNCONNECTED ($NONE$ members)"
 }

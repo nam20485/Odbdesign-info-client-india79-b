@@ -12,8 +12,12 @@ namespace OdbDesignInfoClient.Tests.ProductModel.TestSupport;
 /// <see cref="ConnectivityGoldenPin.Ordinal"/> is its TOP-record ordinal;
 /// <see cref="ConnectivityGoldenPin.NetOrdinal"/> is the TOP record's
 /// <c>net_num</c> — an eda/data NET-record ordinal — with <c>null</c> meaning
-/// unconnected. The client must never turn that <c>null</c> (a -1 sentinel in an
-/// unsigned field on the wire) into a net; it presents such pins with no net.
+/// unconnected. The golden predates the Connectivity contract and speaks the raw
+/// format's terms; the contract (component-connectivity.md §6) absorbs two of them
+/// server-side, and the harness translates accordingly: a <c>null</c> netOrdinal
+/// (the -1 sentinel in an unsigned field) is <c>Kind.UNCONNECTED</c>, and so is
+/// membership of the net named <c>$NONE$</c> — the magic net name the server maps
+/// to a Kind instead of leaking it as a real net.
 /// </summary>
 public sealed record ConnectivityGolden(
     [property: JsonPropertyName("design")] string Design,
@@ -72,4 +76,5 @@ public sealed record ConnectivityCaptureManifest(
     [property: JsonPropertyName("capturedUtc")] string CapturedUtc,
     [property: JsonPropertyName("sha256TopComponents")] string Sha256TopComponents,
     [property: JsonPropertyName("sha256BottomComponents")] string Sha256BottomComponents,
-    [property: JsonPropertyName("sha256EdaData")] string Sha256EdaData);
+    [property: JsonPropertyName("sha256EdaData")] string Sha256EdaData,
+    [property: JsonPropertyName("sha256Connectivity")] string? Sha256Connectivity);

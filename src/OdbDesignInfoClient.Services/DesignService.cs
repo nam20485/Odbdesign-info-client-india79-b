@@ -355,9 +355,11 @@ public class DesignService : IDesignService
     /// </summary>
     /// <remarks>
     /// The request leaves <c>include_normalized_lists</c> unset (false): the server prunes the
-    /// normalized nets/components/packages/parts collections to save bandwidth, and this reader
-    /// reconstructs them from the always-present <c>FileModel</c> (EDA data + per-layer component
-    /// and tools files) exactly as the 3D client does.
+    /// normalized nets/components/packages/parts collections to save bandwidth. The reader
+    /// takes pin/net relationships from the response's always-on <c>connectivity</c> block
+    /// (server-owned truth, D4 — no request flag exists) and placement/attribute data from
+    /// the <c>FileModel</c> (EDA data + per-layer component and tools files); it joins
+    /// nothing itself.
     /// A refresh fans out over every product-model-backed tab in parallel; they all miss
     /// the cache at once, so share one in-flight download per design (which also serves
     /// every step of that design) instead of issuing one GetDesign per tab. The download

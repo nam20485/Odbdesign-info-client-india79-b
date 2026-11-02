@@ -27,12 +27,14 @@ public sealed record DrillToolInfo(
 
 /// <summary>
 /// The complete product model for one design/step, derived from a single gRPC
-/// <see cref="Design"/> (file-archive) response. Mirrors how the 3D client builds its
-/// component/net/pin graph: everything is read from <c>Design.FileModel</c> (EDA data +
-/// per-layer components/tools files), so no normalized lists or extra REST calls are needed.
+/// <see cref="Design"/> (file-archive) response. Relationships (pin rosters,
+/// pin→net connections, net members) are read from the server-owned
+/// <c>Design.connectivity</c> contract; geometry, placement, and attributes come
+/// from <c>Design.FileModel</c> (EDA data + per-layer components/tools files), so
+/// no normalized lists or extra REST calls are needed — and no client-side join.
 /// </summary>
-/// <param name="Components">Components joined with their pins and net summaries.</param>
-/// <param name="Nets">Nets joined with their toeprint connections.</param>
+/// <param name="Components">Placed components with their server-published pin rosters and net summaries.</param>
+/// <param name="Nets">Nets with their member connections (from <c>netMembers</c>).</param>
 /// <param name="Packages">Distinct package (footprint) definitions.</param>
 /// <param name="Parts">Distinct part definitions with usage counts.</param>
 /// <param name="DrillTools">Drill tool definitions from the step's tools files.</param>
@@ -53,9 +55,10 @@ public sealed record DesignProductModel(
 }
 
 /// <summary>
-/// Reads the ODB++ product model out of a gRPC <see cref="Design"/> response's
-/// <c>FileModel</c>. This is the shared entry point that both the info client and (later)
-/// the 3D client can use to avoid re-implementing the EDA-data joins.
+/// Reads the ODB++ product model out of a gRPC <see cref="Design"/> response:
+/// relationships from its always-on <c>connectivity</c> block, geometry and
+/// attributes from its <c>FileModel</c>. This is the shared entry point both
+/// clients use against the server's connectivity contract.
 /// </summary>
 public class ProductModelReader
 {
@@ -77,10 +80,16 @@ public class ProductModelReader
     /// </summary>
     /// <param name="design">The gRPC design response (its <c>FileModel</c> is read).</param>
     /// <param name="stepName">The step to read (case-sensitive server key).</param>
-    /// <returns>The product model; <see cref="DesignProductModel.Empty"/> when data is absent.</returns>
+    /// <returns>
+    /// The product model; <see cref="DesignProductModel.Empty"/> when data is absent —
+    /// including when the response carries no <c>connectivity</c> block (a server
+    /// predating the contract): the content tabs degrade honestly to empty rather
+    /// than half-serving a joined view the client no longer has.
+    /// </returns>
     public DesignProductModel Read(Design? design, string stepName)
     {
         if (design?.FileModel is null ||
+            design.Connectivity is null ||
             !design.FileModel.StepsByName.TryGetValue(stepName, out var stepDir))
         {
             return DesignProductModel.Empty;
@@ -90,60 +99,20 @@ public class ProductModelReader
         var bottomComponents = GetComponentsFile(stepDir, BoardSide.Bottom);
         var edaData = stepDir.Edadatafile;
 
-        // Package geometry comes from EdaDataFile.PackageRecords, so it scales by
-        // that file's own units — not the components-file units used for placements
-        // (the two headers can differ, and component files can be absent entirely).
-        var packageScale = UnitsHelper.UnitsToMmScale(edaData?.Units);
+        // Components + nets come from the server-owned Connectivity contract: the
+        // builder only groups and indexes what Connectivity publishes (pin
+        // rosters, connections, netMembers), enriching rows with fileModel
+        // placement/attribute/BOM data keyed on published identity fields. The
+        // component list is every placed component, in server order.
+        var index = _builder.Build(topComponents, bottomComponents, edaData, design.Connectivity);
+        var components = index.Components.ToList();
 
-        // Components + nets come from the shared builder (joins toeprints → nets).
-        // ByKey is the complete component list: it keys every record on
-        // (side, per-side ordinal) — the canonical component identity that the
-        // eda_data netlist joins on — so it holds exactly one entry per placed
-        // component, in stable side/ordinal order. refDes (ByName) is unique too,
-        // but keys display names.
-        var index = _builder.Build(topComponents, bottomComponents, edaData);
-        var components = index.ByKey.Values.ToList();
-
-
-        var packages = BuildPackages(edaData, packageScale);
+        var packages = BuildPackages(edaData, UnitsHelper.UnitsToMmScale(edaData?.Units));
         var parts = BuildParts(components);
         var drillTools = BuildDrillTools(stepDir);
-        var nets = ApplyViaCounts(index.Nets, edaData);
+        var nets = index.Nets;
 
         return new DesignProductModel(components, nets, packages, parts, drillTools);
-    }
-
-    /// <summary>
-    /// Projects per-net VIA subnet counts onto the builder's net details. The builder's
-    /// existing toeprint join is untouched: this additive pass walks the same
-    /// <see cref="EdaDataFile.NetRecords"/> list positionally (the builder emits exactly
-    /// one <see cref="NetDetail"/> per record, in order) and counts VIA subnets into the
-    /// additive <see cref="NetDetail.ViaCount"/> field. Nets without VIA subnets keep
-    /// their original instance.
-    /// </summary>
-    private static IReadOnlyList<NetDetail> ApplyViaCounts(IReadOnlyList<NetDetail> nets, EdaDataFile? edaData)
-    {
-        if (edaData is null || nets.Count == 0)
-        {
-            return nets;
-        }
-
-        var result = new List<NetDetail>(nets.Count);
-        for (var i = 0; i < nets.Count && i < edaData.NetRecords.Count; i++)
-        {
-            var viaCount = 0;
-            foreach (var subnet in edaData.NetRecords[i].SubnetRecords)
-            {
-                if (subnet.Type == EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via)
-                {
-                    viaCount++;
-                }
-            }
-
-            result.Add(viaCount > 0 ? nets[i] with { ViaCount = viaCount } : nets[i]);
-        }
-
-        return result;
     }
 
     /// <summary>

@@ -12,6 +12,8 @@ sample_design/
   top-components.binpb             captured server ComponentsFile  (comp_+_top)
   bottom-components.binpb          captured server ComponentsFile  (comp_+_bot)
   eda-data.binpb                   captured server EdaDataFile      (step eda/data)
+  connectivity.binpb               captured server Connectivity block (always-on
+                                   field of the gRPC GetDesign response)
   manifest.json                    provenance: server design name, step, endpoint,
                                    capture date, sha256 of each .binpb
 ```
@@ -26,6 +28,9 @@ sample_design/
   `pin_index`, and `netOrdinal` the TOP `net_num` — i.e. the eda/data NET-record
   ordinal (`null` = unconnected). Regeneration and drift propagation are
   server-side concerns (decision D7); never edit these files locally.
+  The golden predates the Connectivity contract, so the harness translates its
+  raw-format terms to contract terms: `netOrdinal: null` and membership of the
+  `$NONE$` net both mean `Kind.UNCONNECTED` (the server absorbed both sentinels).
 - **Captures** were taken 2026-10-15 by the 3D client's
   `tools/OdbDesign3DClient.FixtureCapture --mode connectivity`
   (odbdesign-3d-client-prototype) against the live server: one cached `GetDesign`
@@ -36,6 +41,14 @@ sample_design/
   hand-built fixtures. To recapture from this repo, fetch `GetDesign` over gRPC
   (e.g. via the integration-test harness or the 3D client's tool) and re-serialize
   the three messages; update `manifest.json` sha256 fields to match.
+- **connectivity.binpb** was captured 2026-10-24 the same way — the
+  `Design.connectivity` block of the same deployment's cached `GetDesign`
+  (`sample_design`), after the server's Phase-2 rollout (OdbDesign #606 / M2.5:
+  live acceptance recorded, aggregates match the golden exactly). It is the
+  object the client now consumes (F4/F5): the reader takes pin/net truth from it,
+  and the conformance suite asserts the client's refDes → (pin, net) view equals
+  the golden when built over this capture. Its sha256 rides in `manifest.json`
+  (`sha256Connectivity`) beside the other three.
 
 ## Why only sample_design
 

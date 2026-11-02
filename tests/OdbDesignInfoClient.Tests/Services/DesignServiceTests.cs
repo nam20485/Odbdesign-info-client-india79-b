@@ -878,6 +878,45 @@ public class DesignServiceTests
             },
         };
         design.FileModel.StepsByName["step"] = step;
+
+        // Server-derived connectivity (always-on): one net, one placed component
+        // with pin 1 connected to it. The pin/net truth is the server's; the
+        // fileModel above supplies placement, package, and subnet census data.
+        design.Connectivity = new Connectivity
+        {
+            Nets = { new Connectivity.Types.NetEntry { Ordinal = 0, Name = "VCC" } },
+            Components =
+            {
+                new Connectivity.Types.PlacedComponent
+                {
+                    RefDes = "R1",
+                    Id = 42,
+                    Side = BoardSide.Top,
+                    Package = "RES-SMD",
+                    Pins =
+                    {
+                        new Connectivity.Types.ComponentPin
+                        {
+                            Number = 1,
+                            Name = "1",
+                            Connection = new Connectivity.Types.Connection
+                            {
+                                Kind = Connectivity.Types.Connection.Types.Kind.Connected,
+                                Net = 0,
+                            },
+                        },
+                    },
+                },
+            },
+            NetMembers =
+            {
+                new Connectivity.Types.NetMembers
+                {
+                    Net = 0,
+                    Members = { new Connectivity.Types.Member { RefDes = "R1", Pin = { 1 } } },
+                },
+            },
+        };
         return design;
     }
 

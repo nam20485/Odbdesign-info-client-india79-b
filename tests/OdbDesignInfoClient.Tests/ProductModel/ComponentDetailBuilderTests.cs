@@ -7,173 +7,58 @@ using Xunit;
 namespace OdbDesignInfoClient.Tests.ProductModel;
 
 /// <summary>
-/// Regression pins for the connectivity-contract prep in
-/// <c>OdbDesign.ProductModel.ComponentDetailBuilder</c>: component numbers must
-/// resolve by per-side ordinal only (never against <c>ComponentRecord.Id</c>,
-/// which the server does not populate and which must not become a join key once
-/// ODB++ UIDs ship), per-component bookkeeping must key on (side, per-side
-/// ordinal) so nets/pin counts stay per-component, and refDes name indexes must
-/// be case-sensitive.
-/// See OdbDesign docs/plan/component-connectivity-client-handoff.md §5b/§6/§8.
+/// Regression pins for the Connectivity-contract rebuild of
+/// <c>OdbDesign.ProductModel.ComponentDetailBuilder</c>: the pin→net truth is read
+/// from the server-owned <c>Connectivity</c> block (roster pins, connection kinds,
+/// <c>netMembers</c>) — never re-joined from the fileModel (no toeprint/netlist
+/// resolution, no sentinel interpretation); fileModel data (placement, packages,
+/// attributes) attaches through published identity fields only (refDes, package
+/// name, pin number); and the refDes index is case-sensitive (spec p.152,
+/// component-connectivity.md §8 hazard 3 — the contract shared with the 3D client).
 /// </summary>
 public class ComponentDetailBuilderTests
 {
     private static ComponentDetailBuilder CreateBuilder() =>
         new(NullLogger<ComponentDetailBuilder>.Instance);
 
-    private static EdaDataFile CreateEdaData(out EdaDataFile.Types.NetRecord net)
-    {
-        var eda = new EdaDataFile();
-        net = new EdaDataFile.Types.NetRecord { Name = "VCC", Index = 0 };
-        eda.NetRecords.Add(net);
-        eda.PackageRecords.Add(new EdaDataFile.Types.PackageRecord { Name = "R0603" });
-        return eda;
-    }
-
-    private static EdaDataFile.Types.NetRecord.Types.SubnetRecord ToeprintSubnet(
-        uint componentNumber,
-        BoardSide side = BoardSide.Top)
-    {
-        var subnet = new EdaDataFile.Types.NetRecord.Types.SubnetRecord
-        {
-            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Toeprint,
-            ComponentNumber = componentNumber,
-            ToeprintNumber = 0,
-            Side = side
-        };
-        return subnet;
-    }
-
-    private static ComponentsFile CreateTopComponents()
-    {
-        var comps = new ComponentsFile { Units = "mm" };
-        // Ordinal 0 carries a UID-shaped Id (42) that must never be joined on;
-        // ordinal 1 is what a subnet numbering 1 must resolve to.
-        comps.ComponentRecords.Add(new ComponentsFile.Types.ComponentRecord
-        {
-            Id = 42,
-            CompName = "R1",
-            PartName = "RES-SMD",
-            PkgRef = 0
-        });
-        comps.ComponentRecords.Add(new ComponentsFile.Types.ComponentRecord
-        {
-            Id = 7,
-            CompName = "R2",
-            PartName = "CAP-SMD",
-            PkgRef = 0
-        });
-        return comps;
-    }
-
-    [Fact]
-    public void Build_ResolvesNetComponentsByOrdinalOnly()
-    {
-        var eda = CreateEdaData(out var net);
-        net.SubnetRecords.Add(ToeprintSubnet(1)); // R2's ordinal, not anyone's Id
-        net.SubnetRecords.Add(ToeprintSubnet(42)); // equals R1's Id, but no ordinal 42 exists
-
-        var index = CreateBuilder().Build(CreateTopComponents(), null, eda);
-
-        Assert.Equal(2, index.Nets[0].Connections.Count);
-        Assert.Equal("R2", index.Nets[0].Connections[0].ComponentName);
-        // Must degrade to the raw number: matching it against ComponentRecord.Id
-        // is the mis-resolution landmine the contract removes.
-        Assert.Equal("#42", index.Nets[0].Connections[1].ComponentName);
-    }
-
-    [Fact]
-    public void Build_UnsetSubnetSide_ResolvesBySideBlindOrdinal()
-    {
-        var eda = CreateEdaData(out var net);
-        net.SubnetRecords.Add(ToeprintSubnet(0, BoardSide.BsNone));
-
-        var index = CreateBuilder().Build(CreateTopComponents(), null, eda);
-
-        // Only top exists and only one record holds ordinal 0 → unique match.
-        Assert.Equal("R1", index.Nets[0].Connections[0].ComponentName);
-    }
-
-    [Fact]
-    public void Build_IndexesComponentNames_CaseSensitively()
-    {
-        var eda = CreateEdaData(out _);
-        var comps = new ComponentsFile { Units = "mm" };
-        comps.ComponentRecords.Add(new ComponentsFile.Types.ComponentRecord { Id = 5, CompName = "R1", PkgRef = 0 });
-        comps.ComponentRecords.Add(new ComponentsFile.Types.ComponentRecord { Id = 6, CompName = "r1", PkgRef = 0 });
-
-        var index = CreateBuilder().Build(comps, null, eda);
-
-        // refDes is case-significant (ODB++ spec p.152): both placements are kept.
-        Assert.Equal(2, index.ByName.Count);
-        Assert.Equal(5u, index.ByName["R1"].Id);
-        Assert.Equal(6u, index.ByName["r1"].Id);
-        Assert.Equal(6u, index.FindByName("r1")!.Id);
-        Assert.Equal(5u, index.FindByName("R1")!.Id);
-    }
-
-    // ---- Per-component net separation: (side, per-side ordinal) keying ----
-    //
-    // The canonical component identity is refDes + per-side 0-based ordinal
-    // (proto ComponentRecord.index); ComponentRecord.id is never populated by
-    // the server (always 0) and is NOT a join key. Keying the per-component
-    // maps on Comp.Id merged every component on a side into one entry — a
-    // 1-pin component reported the whole board's net summaries. These tests
-    // pin the corrected join with synthetic protobuf data (no network).
+    // ───────────────────────────────────────────────────────────────────────────
+    // Synthetic fixture: one design whose relationships live in a server-shaped
+    // Connectivity message and whose fileModel carries placement/package data.
+    // NetRecord.Index == list position everywhere (the contract's dense roster).
+    // ───────────────────────────────────────────────────────────────────────────
 
     private static ComponentsFile.Types.ComponentRecord.Types.ToeprintRecord Toeprint(
         uint pinNumber,
-        uint netNumber) => new()
+        double x,
+        uint rawNetNumber) => new()
     {
         PinNumber = pinNumber,
-        LocationX = pinNumber * 0.5,
-        LocationY = -pinNumber * 0.25,
-        NetNumber = netNumber,
+        LocationX = x,
+        LocationY = -x / 2,
+        // Raw toeprint net numbers are deliberately mispointed: the rebuilt view
+        // must never read them (the server absorbed them into Connection.Kind).
+        NetNumber = rawNetNumber,
     };
 
-    private static EdaDataFile.Types.NetRecord.Types.SubnetRecord Connection(
-        uint componentNumber,
-        uint toeprintNumber,
-        BoardSide side = BoardSide.Top) => new()
-    {
-        Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Toeprint,
-        ComponentNumber = componentNumber,
-        ToeprintNumber = toeprintNumber,
-        Side = side,
-    };
-
-    /// <summary>
-    /// Top: R1 (ordinal 0, VCC/GND), C1 (ordinal 1, VCC/GND), U1 (ordinal 2, two
-    /// VCC pins + GND + CLK). Bottom: L1 (ordinal 0, one pin on CLK). All ids are
-    /// left at the proto default 0, exactly as the server ships.
-    /// </summary>
-    private static (ComponentsFile Top, ComponentsFile Bottom) CreateSyntheticComponents()
+    private static ComponentsFile CreateTopComponents()
     {
         var r1 = new ComponentsFile.Types.ComponentRecord
         {
             CompName = "R1",
             PartName = "RES-10K",
-            PkgRef = 0,
+            // Deliberately wrong list index: packages resolve by NAME (published
+            // identity), never by the positional PkgRef.
+            PkgRef = 1,
             LocationX = 1.5,
             LocationY = -2.5,
+            Rotation = 90,
         };
-        r1.ToeprintRecords.Add(Toeprint(1, 10));
-        r1.ToeprintRecords.Add(Toeprint(2, 20));
+        r1.ToeprintRecords.Add(Toeprint(1, 0.5, 99));
+        r1.ToeprintRecords.Add(Toeprint(2, 1.0, 99));
         r1.PropertyRecords.Add(new PropertyRecord { Name = "VALUE", Value = "10k" });
 
-        var c1 = new ComponentsFile.Types.ComponentRecord
-        {
-            CompName = "C1",
-            PartName = "CAP-0402",
-            PkgRef = 1,
-            LocationX = 3,
-            LocationY = 4,
-        };
-        c1.ToeprintRecords.Add(Toeprint(1, 10));
-        c1.ToeprintRecords.Add(Toeprint(2, 20));
-        c1.PropertyRecords.Add(new PropertyRecord { Name = "VALUE", Value = "100n" });
-
-        // Two supply pins on VCC (10) — U1 must get ONE VCC summary row with PinCount 2.
+        // pin 5 is NC: its toeprint points at the raw $NONE$ net record, but the
+        // roster says UNCONNECTED — the sentinel must not leak through.
         var u1 = new ComponentsFile.Types.ComponentRecord
         {
             CompName = "U1",
@@ -182,16 +67,20 @@ public class ComponentDetailBuilderTests
             LocationX = -6,
             LocationY = 7,
         };
-        u1.ToeprintRecords.Add(Toeprint(1, 10));
-        u1.ToeprintRecords.Add(Toeprint(2, 10));
-        u1.ToeprintRecords.Add(Toeprint(3, 20));
-        u1.ToeprintRecords.Add(Toeprint(4, 30));
+        u1.ToeprintRecords.Add(Toeprint(1, 0.1, 99));
+        u1.ToeprintRecords.Add(Toeprint(2, 0.2, 99));
+        u1.ToeprintRecords.Add(Toeprint(3, 0.3, 99));
+        u1.ToeprintRecords.Add(Toeprint(4, 0.4, 99));
+        u1.ToeprintRecords.Add(Toeprint(5, 0.5, 3));
 
         var top = new ComponentsFile { Units = "mm" };
         top.ComponentRecords.Add(r1);
-        top.ComponentRecords.Add(c1);
         top.ComponentRecords.Add(u1);
+        return top;
+    }
 
+    private static ComponentsFile CreateBottomComponents()
+    {
         var l1 = new ComponentsFile.Types.ComponentRecord
         {
             CompName = "L1",
@@ -200,200 +89,455 @@ public class ComponentDetailBuilderTests
             LocationX = 9,
             LocationY = -9,
         };
-        l1.ToeprintRecords.Add(Toeprint(1, 30));
+        l1.ToeprintRecords.Add(Toeprint(1, 0.25, 99));
 
         var bottom = new ComponentsFile { Units = "mm" };
         bottom.ComponentRecords.Add(l1);
-
-        return (top, bottom);
+        return bottom;
     }
 
-    private static EdaDataFile CreateSyntheticEdaData()
+    private static EdaDataFile CreateEdaData()
     {
         var eda = new EdaDataFile();
 
-        var r0603 = new EdaDataFile.Types.PackageRecord { Name = "R0603", Pitch = 0.5f };
+        var r0603 = new EdaDataFile.Types.PackageRecord
+        {
+            Name = "R0603",
+            Pitch = 0.5f,
+            XMin = -1,
+            YMin = -0.5,
+            XMax = 1,
+            YMax = 0.5,
+        };
         r0603.PinRecords.Add(new EdaDataFile.Types.PackageRecord.Types.PinRecord());
         r0603.PinRecords.Add(new EdaDataFile.Types.PackageRecord.Types.PinRecord());
         eda.PackageRecords.Add(r0603);
         eda.PackageRecords.Add(new EdaDataFile.Types.PackageRecord { Name = "SOIC8" });
 
-        // Subnet ComponentNumbers are per-side ordinals: 0=R1/C1-ordinal-1... on
-        // Top; on Bottom, 0=L1. U1 is ordinal 2 on Top.
-        var vcc = new EdaDataFile.Types.NetRecord { Name = "VCC", Index = 10 };
-        vcc.SubnetRecords.Add(Connection(0, 0)); // R1 pin 1
-        vcc.SubnetRecords.Add(Connection(1, 0)); // C1 pin 1
-        vcc.SubnetRecords.Add(Connection(2, 0)); // U1 pin 1
-        vcc.SubnetRecords.Add(Connection(2, 1)); // U1 pin 2 — same net, second toeprint
+        EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type[] types =
+        {
+            EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Toeprint,
+            EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
+        };
+
+        var vcc = new EdaDataFile.Types.NetRecord { Name = "VCC", Index = 0 };
+        vcc.SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord { Type = types[0] });
+        vcc.SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord { Type = types[0] });
+        vcc.SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord { Type = types[1] });
+        vcc.SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord { Type = types[1] });
         eda.NetRecords.Add(vcc);
 
-        var gnd = new EdaDataFile.Types.NetRecord { Name = "GND", Index = 20 };
-        gnd.SubnetRecords.Add(Connection(0, 1)); // R1 pin 2
-        gnd.SubnetRecords.Add(Connection(1, 1)); // C1 pin 2
-        gnd.SubnetRecords.Add(Connection(2, 2)); // U1 pin 3
+        var gnd = new EdaDataFile.Types.NetRecord { Name = "GND", Index = 1 };
+        gnd.SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord { Type = types[0] });
+        gnd.SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord { Type = types[1] });
         eda.NetRecords.Add(gnd);
 
-        var clk = new EdaDataFile.Types.NetRecord { Name = "CLK", Index = 30 };
-        clk.SubnetRecords.Add(Connection(2, 3)); // U1 pin 4
-        clk.SubnetRecords.Add(Connection(0, 0, BoardSide.Bottom)); // L1 pin 1 (bottom ordinal 0)
-        eda.NetRecords.Add(clk);
+        eda.NetRecords.Add(new EdaDataFile.Types.NetRecord { Name = "CLK", Index = 2 });
+        eda.NetRecords.Add(new EdaDataFile.Types.NetRecord { Name = "$NONE$", Index = 3 });
+        eda.NetRecords.Add(new EdaDataFile.Types.NetRecord { Name = "", Index = 4 });
 
         return eda;
     }
 
-    [Fact]
-    public void Build_SeparatesPerComponentNets_BySideAndOrdinal()
+    private static Connectivity.Types.ComponentPin Pin(
+        uint number,
+        string name,
+        Connectivity.Types.Connection.Types.Kind kind,
+        uint net = 0) => new()
     {
-        var (top, bottom) = CreateSyntheticComponents();
-        var index = CreateBuilder().Build(top, bottom, CreateSyntheticEdaData());
+        Number = number,
+        Name = name,
+        Connection = new Connectivity.Types.Connection { Kind = kind, Net = net },
+    };
 
-        // One ByKey entry per record, keyed on the per-side ordinal — keying on
-        // the never-populated Comp.Id collapsed each side to a single entry.
-        Assert.Equal(4, index.ByKey.Count);
-        Assert.Same(index.FindByName("R1"), index.ByKey[(BoardSide.Top, 0u)]);
-        Assert.Same(index.FindByName("C1"), index.ByKey[(BoardSide.Top, 1u)]);
-        Assert.Same(index.FindByName("U1"), index.ByKey[(BoardSide.Top, 2u)]);
-        // Bottom ordinal 0 coexists with Top ordinal 0.
-        Assert.Same(index.FindByName("L1"), index.ByKey[(BoardSide.Bottom, 0u)]);
+    private static Connectivity CreateConnectivity() => new()
+    {
+        Nets =
+        {
+            new Connectivity.Types.NetEntry { Ordinal = 0, Name = "VCC" },
+            new Connectivity.Types.NetEntry { Ordinal = 1, Name = "GND" },
+            new Connectivity.Types.NetEntry { Ordinal = 2, Name = "CLK" },
+            new Connectivity.Types.NetEntry { Ordinal = 3, Name = "$NONE$" },
+            new Connectivity.Types.NetEntry { Ordinal = 4, Name = "" },
+        },
+        Components =
+        {
+            new Connectivity.Types.PlacedComponent
+            {
+                RefDes = "R1",
+                Id = 11,
+                Side = BoardSide.Top,
+                Package = "R0603",
+                Pins =
+                {
+                    Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Connected, 0),
+                    Pin(2, "2", Connectivity.Types.Connection.Types.Kind.Connected, 1),
+                },
+            },
+            new Connectivity.Types.PlacedComponent
+            {
+                RefDes = "U1",
+                Id = 12,
+                Side = BoardSide.Top,
+                Package = "SOIC8",
+                Pins =
+                {
+                    Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Connected, 0),
+                    Pin(2, "2", Connectivity.Types.Connection.Types.Kind.Connected, 0),
+                    Pin(3, "3", Connectivity.Types.Connection.Types.Kind.Connected, 1),
+                    Pin(4, "4", Connectivity.Types.Connection.Types.Kind.Connected, 2),
+                    // NC pin: Kind.UNCONNECTED, net unset — the roster's truth even
+                    // though the fileModel toeprint carries a $NONE$ net number.
+                    Pin(5, "5", Connectivity.Types.Connection.Types.Kind.Unconnected),
+                },
+            },
+            new Connectivity.Types.PlacedComponent
+            {
+                RefDes = "L1",
+                Id = 13,
+                Side = BoardSide.Bottom,
+                Package = "R0603",
+                Pins = { Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Connected, 2) },
+            },
+        },
+        NetMembers =
+        {
+            new Connectivity.Types.NetMembers
+            {
+                Net = 0,
+                Members =
+                {
+                    new Connectivity.Types.Member { RefDes = "R1", Pin = { 1 } },
+                    new Connectivity.Types.Member { RefDes = "U1", Pin = { 1, 2 } },
+                },
+            },
+            new Connectivity.Types.NetMembers
+            {
+                Net = 1,
+                Members =
+                {
+                    new Connectivity.Types.Member { RefDes = "R1", Pin = { 2 } },
+                    new Connectivity.Types.Member { RefDes = "U1", Pin = { 3 } },
+                },
+            },
+            new Connectivity.Types.NetMembers
+            {
+                Net = 2,
+                Members =
+                {
+                    new Connectivity.Types.Member { RefDes = "U1", Pin = { 4 } },
+                    new Connectivity.Types.Member { RefDes = "L1", Pin = { 1 } },
+                },
+            },
+            // nets 3 ($NONE$) and 4 (unnamed) have no members by contract.
+        },
+    };
 
-        // Names all resolve; the record's Id still reflects the proto id (0).
-        Assert.NotNull(index.FindByName("R1"));
-        Assert.NotNull(index.FindByName("C1"));
-        Assert.NotNull(index.FindByName("U1"));
-        Assert.NotNull(index.FindByName("L1"));
-        Assert.Equal(0u, index.FindByName("R1")!.Id);
+    private static ComponentDetailIndex BuildSynthetic() =>
+        CreateBuilder().Build(CreateTopComponents(), CreateBottomComponents(), CreateEdaData(), CreateConnectivity());
 
-        // Each component sees ONLY the nets whose subnets reference it.
-        var r1 = index.FindByName("R1")!;
-        Assert.Equal(new[] { "GND", "VCC" }, r1.Nets.Select(n => n.Name).OrderBy(n => n, StringComparer.Ordinal));
-        Assert.Equal(1, r1.Nets.Single(n => n.Name == "VCC").PinCount);
-        Assert.Equal(1, r1.Nets.Single(n => n.Name == "GND").PinCount);
+    // ───────────────────────────────────────────────────────────────────────────
+    // Index shape and identity
+    // ───────────────────────────────────────────────────────────────────────────
 
-        var c1 = index.FindByName("C1")!;
-        Assert.Equal(new[] { "GND", "VCC" }, c1.Nets.Select(n => n.Name).OrderBy(n => n, StringComparer.Ordinal));
-        Assert.Equal(1, c1.Nets.Single(n => n.Name == "VCC").PinCount);
-        Assert.Equal(1, c1.Nets.Single(n => n.Name == "GND").PinCount);
+    [Fact]
+    public void Build_ReturnsEmpty_WithoutConnectivity()
+    {
+        var index = CreateBuilder().Build(CreateTopComponents(), CreateBottomComponents(), CreateEdaData(), null);
 
-        // One summary row per (component, net) even though U1 touches VCC twice.
-        var u1 = index.FindByName("U1")!;
-        Assert.Equal(new[] { "CLK", "GND", "VCC" }, u1.Nets.Select(n => n.Name).OrderBy(n => n, StringComparer.Ordinal));
-        Assert.Equal(2, u1.Nets.Single(n => n.Name == "VCC").PinCount);
-        Assert.Equal(1, u1.Nets.Single(n => n.Name == "GND").PinCount);
-        Assert.Equal(1, u1.Nets.Single(n => n.Name == "CLK").PinCount);
+        Assert.Same(ComponentDetailIndex.Empty, index);
+        Assert.Empty(index.Components);
+        Assert.Empty(index.Nets);
+    }
 
-        // Bottom-side component: CLK only, via the bottom ordinal 0.
-        var l1 = index.FindByName("L1")!;
-        Assert.Equal(BoardSide.Bottom, l1.Side);
-        Assert.Equal(new[] { "CLK" }, l1.Nets.Select(n => n.Name));
-        Assert.Equal(1, l1.Nets.Single(n => n.Name == "CLK").PinCount);
+    [Fact]
+    public void Build_IndexesComponents_ByRefDes()
+    {
+        var index = BuildSynthetic();
 
-        // Synthetic placements/properties/pins flow through per record.
+        // Every placed component, in server order, keyed on its authoritative refDes.
+        Assert.Equal(new[] { "R1", "U1", "L1" }, index.Components.Select(c => c.Name));
+        Assert.Equal(3, index.ByRefDes.Count);
+        Assert.Same(index.Components[0], index.FindByRefDes("R1"));
+        Assert.Same(index.Components[2], index.FindByRefDes("L1"));
+        Assert.Null(index.FindByRefDes("NOPE"));
+
+        // Identity fields come from the roster: refDes, id (a handle, never a key), side.
+        Assert.Equal(11u, index.FindByRefDes("R1")!.Id);
+        Assert.Equal(BoardSide.Bottom, index.FindByRefDes("L1")!.Side);
+    }
+
+    [Fact]
+    public void Build_KeysRefDes_CaseSensitively()
+    {
+        var comps = new ComponentsFile { Units = "mm" };
+        comps.ComponentRecords.Add(new ComponentsFile.Types.ComponentRecord { Id = 5, CompName = "R1", PkgRef = 0 });
+        comps.ComponentRecords.Add(new ComponentsFile.Types.ComponentRecord { Id = 6, CompName = "r1", PkgRef = 0 });
+
+        var connectivity = new Connectivity
+        {
+            Nets = { new Connectivity.Types.NetEntry { Ordinal = 0, Name = "VCC" } },
+            Components =
+            {
+                new Connectivity.Types.PlacedComponent
+                {
+                    RefDes = "R1",
+                    Id = 5,
+                    Side = BoardSide.Top,
+                    Pins = { Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Connected, 0) },
+                },
+                new Connectivity.Types.PlacedComponent
+                {
+                    RefDes = "r1",
+                    Id = 6,
+                    Side = BoardSide.Top,
+                    Pins = { Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Connected, 0) },
+                },
+                new Connectivity.Types.PlacedComponent
+                {
+                    RefDes = "U1",
+                    Id = 7,
+                    Side = BoardSide.Top,
+                    Pins = { Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Connected, 0) },
+                },
+            },
+        };
+
+        var index = CreateBuilder().Build(comps, null, null, connectivity);
+
+        // refDes is case-significant (spec p.152, §8 hazard 3): case-variant
+        // placements are distinct identities (a case-folded index would collapse
+        // them to one), and a case-folded probe of a mixed-case refDes misses.
+        Assert.Equal(3, index.ByRefDes.Count);
+        Assert.Equal(5u, index.FindByRefDes("R1")!.Id);
+        Assert.Equal(6u, index.FindByRefDes("r1")!.Id);
+        Assert.Equal(7u, index.FindByRefDes("U1")!.Id);
+        Assert.Null(index.FindByRefDes("U1".ToLowerInvariant()));
+    }
+
+    [Fact]
+    public void Build_DuplicateRefDesInConnectivity_KeepsFirstEntry()
+    {
+        var connectivity = CreateConnectivity();
+        connectivity.Components.Add(new Connectivity.Types.PlacedComponent
+        {
+            RefDes = "R1",
+            Id = 999,
+            Side = BoardSide.Top,
+        });
+
+        var index = CreateBuilder().Build(CreateTopComponents(), CreateBottomComponents(), CreateEdaData(), connectivity);
+
+        // A duplicate refDes violates the identity rule; the builder degrades to
+        // the first entry instead of throwing or silently swapping rows.
+        Assert.Equal(3, index.Components.Count);
+        Assert.Equal(11u, index.FindByRefDes("R1")!.Id);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Pin rosters and net truth (server-owned)
+    // ───────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Build_PinsComeFromTheRoster_WithNetTruthAndGeometry()
+    {
+        var index = BuildSynthetic();
+
+        // Roster order is pin-number ascending; one row per roster pin.
+        var u1 = index.FindByRefDes("U1")!;
+        Assert.Equal(new uint[] { 1, 2, 3, 4, 5 }, u1.Pins.Select(p => p.PinNumber));
+
+        // Connected pins carry the net ordinal and its roster name.
+        Assert.All(
+            u1.Pins.Take(4),
+            p => Assert.Equal(index.Nets[(int)p.NetNumber].Name, p.NetName));
+        Assert.Equal("VCC", u1.Pins[0].NetName);
+        Assert.Equal("CLK", u1.Pins[3].NetName);
+
+        // The NC pin: Kind.UNCONNECTED → net unset, never reconstructed from the
+        // net lists, and the raw $NONE$ net number on its fileModel toeprint
+        // (3) never leaks into the view.
+        var nc = u1.Pins[4];
+        Assert.Null(nc.NetName);
+        Assert.Equal(0u, nc.NetNumber);
+
+        // Geometry attaches by pin-number identity with the record's own units.
+        var r1 = index.FindByRefDes("R1")!;
+        Assert.Equal(0.5, r1.Pins[0].X);
+        Assert.Equal(-0.25, r1.Pins[0].Y);
+        Assert.Equal(1.0, r1.Pins[1].X);
+        Assert.Equal(90, r1.Rotation);
+
+        // The NC pin keeps its toeprint geometry — geometry is fileModel data and
+        // attaches by pin-number identity regardless of the connection kind.
+        Assert.Equal(0.5, nc.X);
+    }
+
+    [Fact]
+    public void Build_NetTabComesFromNetMembers()
+    {
+        var index = BuildSynthetic();
+
+        // One row per roster net, in roster order.
+        Assert.Equal(new[] { "VCC", "GND", "CLK", "$NONE$", "#4" }, index.Nets.Select(n => n.Name));
+        Assert.All(index.Nets, (n, i) => Assert.Equal((uint)i, n.Index));
+
+        // The CONNECTED edges, pre-inverted server-side; sides come from the
+        // component roster by refDes.
+        var vcc = index.Nets[0];
+        Assert.Equal(
+            new[] { "Top|R1|1", "Top|U1|1", "Top|U1|2" },
+            vcc.Connections.Select(c => $"{c.Side}|{c.ComponentName}|{c.PinNumber}"));
+        var clk = index.Nets[2];
+        Assert.Equal(
+            new[] { "Top|U1|4", "Bottom|L1|1" },
+            clk.Connections.Select(c => $"{c.Side}|{c.ComponentName}|{c.PinNumber}"));
+
+        // $NONE$ and memberless nets carry no edges (their members are
+        // UNCONNECTED pins, not connections).
+        Assert.Empty(index.Nets[3].Connections);
+        Assert.Empty(index.Nets[4].Connections);
+
+        // Net-record facts (subnet census, via counts) address the eda-data NET
+        // record by net ordinal: VCC has 2 toeprints + 2 vias.
+        Assert.Equal(4, vcc.SubnetCount);
+        Assert.Equal(2, vcc.ViaCount);
+        Assert.Equal(1, index.Nets[1].ViaCount);
+        Assert.Equal(0, clk.ViaCount);
+    }
+
+    [Fact]
+    public void Build_ComponentNetSummariesComeFromRosterConnections()
+    {
+        var index = BuildSynthetic();
+
+        // One summary row per (component, net), pin counts exact, ordered by net
+        // ordinal; the NC pin contributes nothing.
+        var u1 = index.FindByRefDes("U1")!;
+        Assert.Equal(
+            new[] { ("VCC", 0u, 2), ("GND", 1u, 1), ("CLK", 2u, 1) },
+            u1.Nets.Select(n => (n.Name, n.Index, n.PinCount)));
+
+        var r1 = index.FindByRefDes("R1")!;
+        Assert.Equal(
+            new[] { ("VCC", 0u, 1), ("GND", 1u, 1) },
+            r1.Nets.Select(n => (n.Name, n.Index, n.PinCount)));
+
+        var l1 = index.FindByRefDes("L1")!;
+        Assert.Equal(new[] { ("CLK", 2u, 1) }, l1.Nets.Select(n => (n.Name, n.Index, n.PinCount)));
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // fileModel enrichment (placement, packages, attributes)
+    // ───────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Build_EnrichesFromFileModel_ByRefDes()
+    {
+        var index = BuildSynthetic();
+
+        var r1 = index.FindByRefDes("R1")!;
+        Assert.Equal("RES-10K", r1.PartName);
+        Assert.Equal("10k", r1.Value);
         Assert.Equal(1.5, r1.PositionX);
         Assert.Equal(-2.5, r1.PositionY);
-        Assert.Equal("10k", r1.Value);
-        Assert.Equal(2, r1.Pins.Count);
-        Assert.Equal("VCC", r1.Pins[0].NetName);
-        Assert.Equal("R0603", r1.Package?.Name);
+        Assert.Contains(r1.Attributes, a => a.Name == "VALUE" && a.Value == "10k");
 
-        // Net-side connections reference each component by resolved name.
-        var vcc = index.Nets.Single(n => n.Name == "VCC");
-        Assert.Equal(
-            new[] { "C1", "R1", "U1", "U1" },
-            vcc.Connections.Select(c => c.ComponentName).OrderBy(n => n, StringComparer.Ordinal));
+        // Package resolves by NAME from the roster (never by the positional
+        // PkgRef, which deliberately points at the wrong record).
+        Assert.Equal("R0603", r1.Package!.Name);
+        Assert.Equal(0.5, r1.Package.Pitch!.Value, 3);
+
+        // A component the fileModel does not know degrades honestly: roster rows
+        // and net truth stay, placement/attributes/toeprint geometry empty — never
+        // a throw. Package geometry still resolves: it is name-keyed on the EDA
+        // data, and a components-file record is not needed for it.
+        var connectivity = CreateConnectivity();
+        connectivity.Components.Add(new Connectivity.Types.PlacedComponent
+        {
+            RefDes = "X9",
+            Side = BoardSide.Top,
+            Package = "R0603",
+            Pins = { Pin(1, "1", Connectivity.Types.Connection.Types.Kind.Unconnected) },
+        });
+        var degraded = CreateBuilder().Build(null, null, CreateEdaData(), connectivity);
+        var x9 = degraded.FindByRefDes("X9")!;
+        Assert.Null(x9.PartName);
+        Assert.Null(x9.Value);
+        Assert.Equal(0, x9.PositionX);
+        Assert.Empty(x9.Attributes);
+        Assert.Single(x9.Pins);
+        Assert.Null(x9.Pins[0].NetName);
+        Assert.Equal(0, x9.Pins[0].X);
+        Assert.Equal("R0603", x9.Package!.Name);
+    }
+
+    [Fact]
+    public void Build_PackageWithoutEdaRecord_LeavesDetailUnset()
+    {
+        var connectivity = CreateConnectivity();
+        connectivity.Components.Add(new Connectivity.Types.PlacedComponent
+        {
+            RefDes = "X1",
+            Side = BoardSide.Top,
+            Package = "NO-SUCH-PACKAGE",
+        });
+
+        var index = CreateBuilder().Build(CreateTopComponents(), CreateBottomComponents(), CreateEdaData(), connectivity);
+        var x1 = index.FindByRefDes("X1")!;
+
+        Assert.Equal("NO-SUCH-PACKAGE", x1.PkgRef);
+        Assert.Null(x1.Package);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────────
+    // Reader level
+    // ───────────────────────────────────────────────────────────────────────────
+
+    private static Design CreateSyntheticDesign(Connectivity? connectivity = null)
+    {
+        var step = new StepDirectory { Name = "step" };
+        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = CreateTopComponents() };
+        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = CreateBottomComponents() };
+        step.Edadatafile = CreateEdaData();
+
+        var design = new Design { Name = "synthetic", FileModel = new FileArchive(), Connectivity = connectivity };
+        design.FileModel.StepsByName["step"] = step;
+        return design;
     }
 
     [Fact]
     public void Read_BuildsConsistentModelFromSyntheticDesign()
     {
-        var (top, bottom) = CreateSyntheticComponents();
-        var step = new StepDirectory { Name = "step" };
-        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
-        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
-        step.Edadatafile = CreateSyntheticEdaData();
-
-        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
-        design.FileModel.StepsByName["step"] = step;
-
+        var design = CreateSyntheticDesign(CreateConnectivity());
         var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
 
-        // ByKey-derived component list: one entry per record, not one per side.
-        Assert.Equal(4, model.Components.Count);
-        Assert.Equal(3, model.Nets.Count);
+        Assert.Equal(3, model.Components.Count);
+        Assert.Equal(5, model.Nets.Count);
         Assert.Equal(2, model.Packages.Count);
 
         // Parts group over the full component list with exact usage counts.
-        Assert.Equal(4, model.Parts.Count);
+        Assert.Equal(3, model.Parts.Count);
         Assert.All(model.Parts, p => Assert.Equal(1, p.UsageCount));
         Assert.Contains(model.Parts, p => p.Name == "RES-10K");
 
-        // The per-component separation survives the reader: R1 is a 2-pin part
-        // on 2 nets, never the merged whole-board summary.
-        var r1 = model.Components.Single(c => c.Name == "R1");
-        Assert.Equal(2, r1.Nets.Count);
+        // The per-component separation survives the reader: U1 touches 3 nets with
+        // 5 pins (one NC), never a merged whole-board summary.
         var u1 = model.Components.Single(c => c.Name == "U1");
+        Assert.Equal(5, u1.Pins.Count);
         Assert.Equal(3, u1.Nets.Count);
-        Assert.Equal(3, model.Components.Max(c => c.Nets.Count));
-        Assert.Equal(1, model.Components.Min(c => c.Nets.Count));
 
-        // Unknown step → empty model (degrade, never throw).
+        // Unknown step or missing connectivity → empty model (degrade, never throw).
         var reader = new ProductModelReader(NullLoggerFactory.Instance);
         Assert.Same(DesignProductModel.Empty, reader.Read(design, "no-such-step"));
         Assert.Same(DesignProductModel.Empty, reader.Read(null, "step"));
-    }
-
-    [Fact]
-    public void Read_ProjectsViaCounts_WithoutTouchingToeprintJoins()
-    {
-        // Synthetic design with VIA subnets on VCC (2) and GND (1); CLK has none.
-        var (top, bottom) = CreateSyntheticComponents();
-        var eda = CreateSyntheticEdaData();
-        eda.NetRecords[0].SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord
-        {
-            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
-        });
-        eda.NetRecords[0].SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord
-        {
-            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
-        });
-        eda.NetRecords[1].SubnetRecords.Add(new EdaDataFile.Types.NetRecord.Types.SubnetRecord
-        {
-            Type = EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via,
-        });
-
-        var step = new StepDirectory { Name = "step" };
-        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
-        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
-        step.Edadatafile = eda;
-
-        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
-        design.FileModel.StepsByName["step"] = step;
-
-        var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
-
-        // The additive ViaCount field carries the per-net VIA subnet counts...
-        Assert.Equal(2, model.Nets.Single(n => n.Name == "VCC").ViaCount);
-        Assert.Equal(1, model.Nets.Single(n => n.Name == "GND").ViaCount);
-        Assert.Equal(0, model.Nets.Single(n => n.Name == "CLK").ViaCount);
-
-        // ...while the toeprint connections stay exactly as the builder made them
-        // (VIA subnets never leak into the pin connections; U1 touches VCC twice).
-        Assert.Equal(4, model.Nets.Single(n => n.Name == "VCC").Connections.Count);
-        Assert.Equal(3, model.Nets.Single(n => n.Name == "GND").Connections.Count);
-        Assert.Equal(2, model.Nets.Single(n => n.Name == "CLK").Connections.Count);
-
-        // Total subnet count still reports every subnet (4 toeprints + 2 vias).
-        Assert.Equal(6, model.Nets.Single(n => n.Name == "VCC").SubnetCount);
+        Assert.Same(DesignProductModel.Empty, reader.Read(CreateSyntheticDesign(null), "step"));
     }
 
     [Fact]
     public void Read_ClassifiesDrillToolPlating_PlatedViasAndNonPlated()
     {
-        var (top, bottom) = CreateSyntheticComponents();
-        var step = new StepDirectory { Name = "step" };
-        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
-        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
-        step.Edadatafile = CreateSyntheticEdaData();
-
+        var design = CreateSyntheticDesign(CreateConnectivity());
         var tools = new ToolsFile { Units = "mm" };
         tools.Tools[1] = new ToolsFile.Types.ToolsRecord
         {
@@ -413,10 +557,7 @@ public class ComponentDetailBuilderTests
             Type = ToolsFile.Types.ToolsRecord.Types.Type.Via,
             DrillSize = 0.2,
         };
-        step.LayersByName["drill"] = new LayerDirectory { ToolFile = tools };
-
-        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
-        design.FileModel.StepsByName["step"] = step;
+        design.FileModel.StepsByName["step"].LayersByName["drill"] = new LayerDirectory { ToolFile = tools };
 
         var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
 
@@ -430,27 +571,16 @@ public class ComponentDetailBuilderTests
     [Fact]
     public void Read_ScalesPackageGeometryByEdaUnits_PlacementsByComponentsUnits()
     {
-        var (top, bottom) = CreateSyntheticComponents();
-        top.Units = "mm";
-
         // The EDA header declares inch while the components files declare mm —
         // package geometry must follow its own file's units, not the placements'.
-        var eda = CreateSyntheticEdaData();
-        eda.Units = "inch";
-        var r0603 = eda.PackageRecords[0];
+        var design = CreateSyntheticDesign(CreateConnectivity());
+        design.FileModel.StepsByName["step"].Edadatafile.Units = "inch";
+        var r0603 = design.FileModel.StepsByName["step"].Edadatafile.PackageRecords[0];
         r0603.Pitch = 0.5;
         r0603.XMin = 1;
         r0603.XMax = 2;
         r0603.YMin = -1;
         r0603.YMax = 1;
-
-        var step = new StepDirectory { Name = "step" };
-        step.LayersByName["comp_+_top"] = new LayerDirectory { Components = top };
-        step.LayersByName["comp_+_bot"] = new LayerDirectory { Components = bottom };
-        step.Edadatafile = eda;
-
-        var design = new Design { Name = "synthetic", FileModel = new FileArchive() };
-        design.FileModel.StepsByName["step"] = step;
 
         var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
 
@@ -464,7 +594,7 @@ public class ComponentDetailBuilderTests
         Assert.Equal(1.5, r1.PositionX);
         Assert.Equal(-2.5, r1.PositionY);
 
-        // The builder's per-component package detail uses the same EDA scale.
+        // The per-component package detail uses the same EDA scale.
         Assert.Equal(0.5 * 25.4, r1.Package!.Pitch!.Value, 3);
     }
 }

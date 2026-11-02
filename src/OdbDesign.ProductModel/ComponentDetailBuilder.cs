@@ -1,35 +1,39 @@
 using Microsoft.Extensions.Logging;
 using Odb.Lib.Protobuf;
+using Odb.Lib.Protobuf.ProductModel;
 using OdbDesign.ProductModel.Models;
 
 namespace OdbDesign.ProductModel;
 
 /// <summary>
-/// Builds <see cref="ComponentDetail"/> records from the components/EDA-data protobufs of a
-/// design's <c>FileModel</c> — no additional server round trips.
+/// Builds <see cref="ComponentDetail"/> records for one design/step from the
+/// server-owned <c>Connectivity</c> message of a gRPC <c>GetDesign</c> response —
+/// no additional server round trips and, by contract, no client-side join.
 ///
-/// Join notes (verified against the ODB++ structures the server ships):
-/// - Canonical component identity: refDes (<c>CompName</c>) plus the record's
-///   0-based per-side ordinal within <c>comp_+_top</c>/<c>comp_+_bot</c>
-///   (proto <c>ComponentRecord.index</c>). <c>ComponentRecord.id</c> is never
-///   populated by the server (always 0) and is NOT a join key.
-/// - <c>ComponentRecord.PkgRef</c> is a list index into <c>EdaDataFile.PackageRecords</c>.
-/// - Component pin → net: <c>ToeprintRecord.NetNumber</c> resolves against
-///   <c>NetRecord.Index</c>, falling back to the record's ordinal position.
-/// - Net → component: TOEPRINT <c>SubnetRecord.ComponentNumber</c> equals the
-///   component's per-side ordinal, so it resolves against the record's list
-///   position within the subnet's board side (side-blind fallback when the side
-///   field is unset); the subnet's <c>ToeprintNumber</c> indexes the component's
-///   toeprint records for the pin number. <c>ComponentRecord.Id</c> is
-///   deliberately never consulted — see <see cref="ResolveComponent"/>.
-/// - Per-component bookkeeping (<c>byKey</c>, net summaries, pin counts) keys on
-///   (side, per-side ordinal) — the canonical netlist foreign key. Keying on
-///   <c>Comp.Id</c> would merge every component on a side into one entry.
-/// - BOM: the component's BOM/CPN attribute value keys into
-///   <c>bomDescriptionRecordsByCpn</c>.
-/// Every join degrades to null/empty when the data does not line up; the caller simply
-/// shows less rather than failing the load.
+/// Division of truth (component-connectivity.md §6/§7): <b>relationships</b>
+/// (which pins a component has, and through which pins it reaches which net) are
+/// the server's — this builder reads them straight off
+/// <see cref="Connectivity.Types.PlacedComponent.Pins"/> and
+/// <c>netMembers</c>. <b>Geometry, placement, and attributes</b> stay in the
+/// <c>FileModel</c> (components files, EDA data) and are attached here through
+/// local indexes over <i>published identity fields</i> only (conformance rule 1):
+/// refDes → component record, package name → package record, pin number →
+/// toeprint geometry. No positional reference (componentNumber, toeprintNumber,
+/// netNumber) is ever resolved against another collection (rule 2), and no format
+/// sentinel (<c>-1</c>, <c>$NONE$</c>) is ever interpreted — the server absorbed
+/// those into <see cref="Connectivity.Types.Connection.Types.Kind"/> and resolved
+/// pin numbers.
+///
+/// Every lookup degrades to null/empty when the data does not line up; the caller
+/// simply shows less rather than failing the load.
 /// </summary>
+/// <remarks>
+/// The server derives <c>Connectivity</c> from the first step of its product
+/// model (<c>Design::Build</c> walks <c>steps.begin()</c>); designs served today
+/// are single-step, so the block matches the step the reader picked. A multi-step
+/// archive would already disagree with the server's whole product model, not just
+/// this view.
+/// </remarks>
 public class ComponentDetailBuilder
 {
     private readonly ILogger<ComponentDetailBuilder> _logger;
@@ -44,192 +48,297 @@ public class ComponentDetailBuilder
     }
 
     /// <summary>
-    /// Builds the component/net product-model index for one step from its top and bottom
-    /// components files and EDA data.
+    /// Builds the component/net product-model index for one step from the design's
+    /// server-owned <c>Connectivity</c> block, enriched with fileModel placement,
+    /// package, attribute, and BOM data.
     /// </summary>
     /// <param name="topComponents">The top-side components file (may be null).</param>
     /// <param name="bottomComponents">The bottom-side components file (may be null).</param>
-    /// <param name="edaData">The step's EDA data (nets, packages, attributes).</param>
-    /// <returns>The component/net index; <see cref="ComponentDetailIndex.Empty"/> when EDA data is absent.</returns>
+    /// <param name="edaData">The step's EDA data (packages, net attributes; may be null).</param>
+    /// <param name="connectivity">The server-derived connectivity contract (may be null on servers predating it).</param>
+    /// <returns>The component/net index; <see cref="ComponentDetailIndex.Empty"/> when Connectivity is absent.</returns>
     public ComponentDetailIndex Build(
         ComponentsFile? topComponents,
         ComponentsFile? bottomComponents,
-        EdaDataFile? edaData)
+        EdaDataFile? edaData,
+        Connectivity? connectivity)
     {
-        if (edaData == null)
+        if (connectivity == null)
         {
             return ComponentDetailIndex.Empty;
         }
 
-        // (side, per-side ordinal) → component record. The ordinal is the
-        // canonical netlist foreign key: eda_data subnets reference components by
-        // ComponentNumber == the record's list position on the subnet's board
-        // side. Component numbers are per-side data (each board side has its own
-        // components file), so the lookup keys include the side; the side-blind
-        // (number-only) view exists for servers that omit the subnet side field —
-        // an unset proto3 optional reads as BsNone. Proto ComponentRecord.id is
-        // never populated (always 0) and is not a join key.
-        var byIndex = new Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side, uint Index)>>();
-        var byIndexAnySide = new Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord Comp, BoardSide Side, uint Index)>>();
-        AddComponentLookups(topComponents, BoardSide.Top, byIndex, byIndexAnySide);
-        AddComponentLookups(bottomComponents, BoardSide.Bottom, byIndex, byIndexAnySide);
-
-        // Placement coordinates (component locations, toeprint offsets) live in the
-        // components files; package geometry lives in EdaDataFile.PackageRecords —
-        // the two headers can declare different units, so each scales by its own.
-        var placementScale = UnitsHelper.UnitsToMmScale(topComponents?.Units ?? bottomComponents?.Units);
-        var packageScale = UnitsHelper.UnitsToMmScale(edaData.Units);
-
-        // One pass over the nets builds both the net details (net tab) and the
-        // per-component net summaries (component tab), keeping pin counts exact.
-        // Keys carry the per-side ordinal (the netlist FK), never Comp.Id.
-        var netDetails = new List<NetDetail>(edaData.NetRecords.Count);
-        var netsByComponent = new Dictionary<(BoardSide Side, uint Index), List<NetSummary>>();
-        // Dedupe and pin counts key on the net record's list ordinal — the only
-        // stable net identity. Raw names collide across distinct unnamed nets
-        // (""), and display names ("#Index"-style fallbacks) never equal the raw
-        // name they would be deduped against, so name-keyed bookkeeping either
-        // merges distinct nets or never dedupes at all.
-        var pinCounts = new Dictionary<(int Net, BoardSide Side, uint Index), int>();
-        var summarized = new HashSet<(BoardSide Side, uint Index, int Net)>();
-
-        for (var netOrdinal = 0; netOrdinal < edaData.NetRecords.Count; netOrdinal++)
+        // Placement coordinates live in the components files, package geometry in
+        // EdaDataFile.PackageRecords — the two headers can declare different units,
+        // so each scales by its own. Package geometry is name-keyed (the contract's
+        // `packages`/`PlacedComponent.package` identity), never by the positional
+        // PkgRef index.
+        var packageScale = UnitsHelper.UnitsToMmScale(edaData?.Units);
+        var packagesByName = new Dictionary<string, PackageDetail>(StringComparer.Ordinal);
+        if (edaData != null)
         {
-            var net = edaData.NetRecords[netOrdinal];
-            var connections = new List<NetConnection>();
-            var connectedKeys = new List<(BoardSide Side, uint Index)>();
-
-            foreach (var subnet in net.SubnetRecords)
+            foreach (var pkg in edaData.PackageRecords)
             {
-                if (subnet.Type != EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Toeprint)
-                {
-                    continue;
-                }
+                packagesByName.TryAdd(pkg.Name, new PackageDetail(
+                    pkg.Name,
+                    pkg.Pitch > 0 ? pkg.Pitch * packageScale : null,
+                    pkg.XMin * packageScale,
+                    pkg.YMin * packageScale,
+                    pkg.XMax * packageScale,
+                    pkg.YMax * packageScale,
+                    pkg.PinRecords.Count,
+                    pkg.OutlineRecords.Count));
+            }
+        }
 
-                var comp = ResolveComponent(subnet.ComponentNumber, subnet.Side, byIndex, byIndexAnySide);
-                if (comp == null)
-                {
-                    // Unresolvable reference: keep the raw number so the net tab can
-                    // still show something instead of silently dropping a connection.
-                    connections.Add(new NetConnection(
-                        $"#{subnet.ComponentNumber}",
-                        ResolvePinNumber(subnet.ToeprintNumber, null),
-                        subnet.Side));
-                    continue;
-                }
+        // refDes → component record, over published identity fields only. The
+        // contract makes refDes the authoritative component key (spec p.152,
+        // case-significant — Ordinal, never OrdinalIgnoreCase, which would merge
+        // R1/r1 on case-differing designs; §8 hazard 3). First record wins a
+        // duplicate refDes: a design with two same-named records violates the
+        // identity rule, and last-wins would silently swap placement data.
+        var recordByRefDes = new Dictionary<string, (ComponentsFile.Types.ComponentRecord Record, ComponentsFile File)>(
+            StringComparer.Ordinal);
+        AddRecordsByRefDes(topComponents, recordByRefDes);
+        AddRecordsByRefDes(bottomComponents, recordByRefDes);
 
-                var key = (Side: comp.Value.Side, Index: comp.Value.Index);
-                connections.Add(new NetConnection(
-                    ComponentName(comp.Value.Comp),
-                    ResolvePinNumber(subnet.ToeprintNumber, comp.Value.Comp),
-                    subnet.Side));
-                connectedKeys.Add(key);
+        // Per-component pin rows and net summaries, then the net-tab rows from
+        // netMembers. refDes is unique per the identity rule; on a violating
+        // message the first entry wins and the duplicate is logged, not thrown
+        // (degrade-never-fail).
+        var components = new List<ComponentDetail>(connectivity.Components.Count);
+        var byRefDes = new Dictionary<string, ComponentDetail>(StringComparer.Ordinal);
+        var sideByRefDes = new Dictionary<string, BoardSide>(StringComparer.Ordinal);
+        var unenriched = 0;
 
-                var pinKey = (netOrdinal, key.Side, key.Index);
-                pinCounts[pinKey] = pinCounts.TryGetValue(pinKey, out var count) ? count + 1 : 1;
+        foreach (var placed in connectivity.Components)
+        {
+            sideByRefDes.TryAdd(placed.RefDes, placed.Side);
+            recordByRefDes.TryGetValue(placed.RefDes, out var entry);
+            if (entry.Record is null)
+            {
+                unenriched++;
             }
 
-            netDetails.Add(new NetDetail(
-                string.IsNullOrEmpty(net.Name) ? $"#{net.Index}" : net.Name,
-                net.Index,
-                net.SubnetRecords.Count,
-                connections,
-                BuildNetAttributes(net, edaData.AttributeNames)));
-
-            foreach (var key in connectedKeys)
+            var detail = BuildDetail(placed, entry, packagesByName, connectivity.Nets);
+            if (byRefDes.TryAdd(placed.RefDes, detail))
             {
-                if (!netsByComponent.TryGetValue(key, out var list))
-                {
-                    list = new List<NetSummary>();
-                    netsByComponent[key] = list;
-                }
+                components.Add(detail);
+            }
+            else
+            {
+                _logger.LogDebug(
+                    "Duplicate refDes '{RefDes}' in Connectivity components; keeping the first entry",
+                    placed.RefDes);
+            }
+        }
 
-                // One summary row per (component, net) pair — the component can
-                // touch the same net through many toeprints.
-                if (summarized.Add((key.Side, key.Index, netOrdinal)))
+        var nets = BuildNetDetails(connectivity, edaData, sideByRefDes);
+
+        _logger.LogDebug(
+            "Built component detail index: {Components} components, {Nets} nets, {Unenriched} components without fileModel placement data",
+            components.Count, nets.Count, unenriched);
+
+        return new ComponentDetailIndex(components, byRefDes, nets);
+    }
+
+    private ComponentDetail BuildDetail(
+        Connectivity.Types.PlacedComponent placed,
+        (ComponentsFile.Types.ComponentRecord Record, ComponentsFile File) entry,
+        Dictionary<string, PackageDetail> packagesByName,
+        IReadOnlyList<Connectivity.Types.NetEntry> netEntries)
+    {
+        // The record may be absent (server/filemodel disagreement): placement,
+        // attributes, and BOM degrade to empty; the pin roster and net truth stay.
+        var record = entry.Record;
+        var placementScale = UnitsHelper.UnitsToMmScale(entry.File?.Units);
+
+        // Toeprint geometry for the pin rows, keyed on the toeprint's published
+        // pin number — the same identity space the server resolved
+        // ComponentPin.number from. This is an identity match on a published
+        // field (rule 1), not a toeprintNumber reference resolution (rule 2).
+        Dictionary<uint, ComponentsFile.Types.ComponentRecord.Types.ToeprintRecord>? toeprintsByNumber = null;
+        if (record != null && record.ToeprintRecords.Count > 0)
+        {
+            toeprintsByNumber = new Dictionary<uint, ComponentsFile.Types.ComponentRecord.Types.ToeprintRecord>();
+            foreach (var toeprint in record.ToeprintRecords)
+            {
+                toeprintsByNumber.TryAdd(toeprint.PinNumber, toeprint);
+            }
+        }
+
+        var pins = new List<PinDetail>(placed.Pins.Count);
+        var pinsByNet = new Dictionary<uint, int>();
+        foreach (var pin in placed.Pins)
+        {
+            ComponentsFile.Types.ComponentRecord.Types.ToeprintRecord? toeprint = null;
+            toeprintsByNumber?.TryGetValue(pin.Number, out toeprint);
+            var connected = pin.Connection.Kind == Connectivity.Types.Connection.Types.Kind.Connected;
+
+            // Unconnected pins come from the roster with their net unset
+            // (Kind.UNCONNECTED absorbs netNumber -1 and $NONE$ membership
+            // server-side) — never reconstructed from the net lists.
+            var netOrdinal = connected ? pin.Connection.Net : 0;
+            string? netName = connected ? NetNameOf(netEntries, pin.Connection.Net) : null;
+
+            pins.Add(new PinDetail(
+                pin.Number,
+                string.IsNullOrEmpty(pin.Name) ? null : pin.Name,
+                (toeprint?.LocationX ?? 0) * placementScale,
+                (toeprint?.LocationY ?? 0) * placementScale,
+                toeprint?.Rotation ?? 0,
+                netOrdinal,
+                netName));
+
+            if (connected)
+            {
+                pinsByNet[netOrdinal] = pinsByNet.TryGetValue(netOrdinal, out var count) ? count + 1 : 1;
+            }
+        }
+
+        // One summary row per (component, net) — the component can touch the same
+        // net through several pins. Ordered by net ordinal, matching the roster.
+        var netSummaries = new List<NetSummary>(pinsByNet.Count);
+        foreach (var (netOrdinal, pinCount) in pinsByNet.OrderBy(kv => kv.Key))
+        {
+            netSummaries.Add(new NetSummary(
+                NetDisplayName(netEntries, netOrdinal),
+                netOrdinal,
+                pinCount));
+        }
+
+        // Component height is a 3D-rendering concern resolved from BOM/footprint
+        // attributes; data viewers do not surface it, so it is reported as
+        // unavailable rather than pulling in the render pipeline.
+        const float heightMm = 0f;
+        const string heightSource = "unavailable";
+
+        var packageName = string.IsNullOrEmpty(placed.Package) ? null : placed.Package;
+        return new ComponentDetail(
+            placed.RefDes,
+            placed.HasId ? placed.Id : 0,
+            string.IsNullOrEmpty(record?.PartName) ? null : record!.PartName,
+            record == null ? null : ReadValueProperty(record),
+            placed.Side,
+            (record?.LocationX ?? 0) * placementScale,
+            (record?.LocationY ?? 0) * placementScale,
+            record?.Rotation ?? 0,
+            record?.Mirror ?? false,
+            heightMm,
+            heightSource,
+            packageName,
+            packageName != null && packagesByName.TryGetValue(packageName, out var package) ? package : null,
+            entry.File == null || record == null ? null : ResolveBom(record, entry.File),
+            entry.File == null || record == null
+                ? Array.Empty<NameValue>()
+                : BuildAttributes(record, entry.File.AttributeNames),
+            pins,
+            netSummaries);
+    }
+
+    /// <summary>
+    /// The net-tab rows: one per <c>Connectivity.nets</c> roster entry (dense over
+    /// the eda-data NET-record sequence, $NONE$ included with its literal name),
+    /// with the CONNECTED edges from <c>netMembers</c> — the same edges as the
+    /// per-component pin connections, pre-inverted server-side, so the client
+    /// inverts nothing.
+    /// </summary>
+    private List<NetDetail> BuildNetDetails(
+        Connectivity connectivity,
+        EdaDataFile? edaData,
+        IReadOnlyDictionary<string, BoardSide> sideByRefDes)
+    {
+        var membersByNet = new Dictionary<uint, Connectivity.Types.NetMembers>();
+        foreach (var netMembers in connectivity.NetMembers)
+        {
+            membersByNet.TryAdd(netMembers.Net, netMembers);
+        }
+
+        var nets = new List<NetDetail>(connectivity.Nets.Count);
+        foreach (var netEntry in connectivity.Nets)
+        {
+            var connections = new List<NetConnection>();
+            if (membersByNet.TryGetValue(netEntry.Ordinal, out var netMembers))
+            {
+                foreach (var member in netMembers.Members)
                 {
-                    list.Add(new NetSummary(
-                        string.IsNullOrEmpty(net.Name) ? $"#{net.Index}" : net.Name,
-                        net.Index,
-                        pinCounts.TryGetValue((netOrdinal, key.Side, key.Index), out var pins) ? pins : 0));
+                    var side = sideByRefDes.TryGetValue(member.RefDes, out var memberSide)
+                        ? memberSide
+                        : BoardSide.BsNone;
+                    foreach (var pinNumber in member.Pin)
+                    {
+                        connections.Add(new NetConnection(member.RefDes, pinNumber, side));
+                    }
+                }
+            }
+
+            // The net ordinal names the net (spec p.153: the NET record sequence),
+            // so fileModel facts about the net — its subnet census and its
+            // attributes — are addressed by ordinal, not joined by reference.
+            EdaDataFile.Types.NetRecord? netRecord = null;
+            if (edaData != null && netEntry.Ordinal < (uint)edaData.NetRecords.Count)
+            {
+                netRecord = edaData.NetRecords[(int)netEntry.Ordinal];
+            }
+
+            nets.Add(new NetDetail(
+                string.IsNullOrEmpty(netEntry.Name) ? $"#{netEntry.Ordinal}" : netEntry.Name,
+                netEntry.Ordinal,
+                netRecord?.SubnetRecords.Count ?? 0,
+                connections,
+                netRecord == null ? Array.Empty<NameValue>() : BuildNetAttributes(netRecord, edaData!.AttributeNames),
+                CountSubnets(netRecord, EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type.Via)));
+        }
+
+        return nets;
+    }
+
+    private static int CountSubnets(EdaDataFile.Types.NetRecord? net, EdaDataFile.Types.NetRecord.Types.SubnetRecord.Types.Type type)
+    {
+        var count = 0;
+        if (net != null)
+        {
+            foreach (var subnet in net.SubnetRecords)
+            {
+                if (subnet.Type == type)
+                {
+                    count++;
                 }
             }
         }
 
-        // Keyed on (side, per-side ordinal) — the canonical component identity
-        // used by the netlist join, so one entry per component record.
-        var byKey = new Dictionary<(BoardSide Side, uint Index), ComponentDetail>();
-        var byName = new Dictionary<string, ComponentDetail>(StringComparer.Ordinal);
-        BuildSide(topComponents, BoardSide.Top, edaData, placementScale, packageScale, netsByComponent, byKey, byName);
-        BuildSide(bottomComponents, BoardSide.Bottom, edaData, placementScale, packageScale, netsByComponent, byKey, byName);
-
-        var unresolved = netDetails.Sum(n => n.Connections.Count(c => c.ComponentName.StartsWith('#')));
-        _logger.LogDebug(
-            "Built component detail index: {Components} components, {Nets} nets, {WithNets} components with net links, {Unresolved} unresolved net references",
-            byKey.Count, netDetails.Count, netsByComponent.Count, unresolved);
-
-        return new ComponentDetailIndex(byKey, byName, netDetails);
+        return count;
     }
 
-    private void BuildSide(
+    /// <summary>The roster name of a net, or null when the entry is unnamed.</summary>
+    private static string? NetNameOf(IReadOnlyList<Connectivity.Types.NetEntry> netEntries, uint ordinal) =>
+        ordinal < (uint)netEntries.Count && !string.IsNullOrEmpty(netEntries[(int)ordinal].Name)
+            ? netEntries[(int)ordinal].Name
+            : null;
+
+    /// <summary>The roster display name of a net: its name, or "#ordinal" when unnamed.</summary>
+    private static string NetDisplayName(IReadOnlyList<Connectivity.Types.NetEntry> netEntries, uint ordinal) =>
+        ordinal < (uint)netEntries.Count && !string.IsNullOrEmpty(netEntries[(int)ordinal].Name)
+            ? netEntries[(int)ordinal].Name
+            : $"#{ordinal}";
+
+    private static void AddRecordsByRefDes(
         ComponentsFile? components,
-        BoardSide side,
-        EdaDataFile edaData,
-        double placementScale,
-        double packageScale,
-        Dictionary<(BoardSide Side, uint Index), List<NetSummary>> netsByComponent,
-        Dictionary<(BoardSide Side, uint Index), ComponentDetail> byKey,
-        Dictionary<string, ComponentDetail> byName)
+        Dictionary<string, (ComponentsFile.Types.ComponentRecord, ComponentsFile)> map)
     {
         if (components == null)
         {
             return;
         }
 
-        var netNamesByNumber = BuildNetNameLookup(edaData);
-
-        for (var i = 0; i < components.ComponentRecords.Count; i++)
+        foreach (var record in components.ComponentRecords)
         {
-            var comp = components.ComponentRecords[i];
-            var package = ResolvePackage(comp, edaData, packageScale, out var pkgName);
-            var pins = BuildPins(comp, netNamesByNumber, placementScale);
-            // The list position (per-side ordinal) is the canonical netlist FK;
-            // Comp.Id is never populated and must not key per-component data.
-            netsByComponent.TryGetValue((side, (uint)i), out var nets);
-
-            // Component height is a 3D-rendering concern resolved from BOM/footprint
-            // attributes; data viewers do not surface it, so it is reported as
-            // unavailable rather than pulling in the render pipeline.
-            const float heightMm = 0f;
-            const string heightSource = "unavailable";
-
-            var name = ComponentName(comp);
-            var detail = new ComponentDetail(
-                name,
-                comp.Id,
-                string.IsNullOrEmpty(comp.PartName) ? null : comp.PartName,
-                ReadValueProperty(comp),
-                side,
-                comp.LocationX * placementScale,
-                comp.LocationY * placementScale,
-                comp.Rotation,
-                comp.Mirror,
-                heightMm,
-                heightSource,
-                pkgName,
-                package,
-                ResolveBom(comp, components),
-                BuildAttributes(comp, components.AttributeNames),
-                pins,
-                (IReadOnlyList<NetSummary>?)nets ?? Array.Empty<NetSummary>());
-
-            byKey[(side, (uint)i)] = detail;
-            byName[name] = detail;
+            if (!string.IsNullOrEmpty(record.CompName))
+            {
+                map.TryAdd(record.CompName, (record, components));
+            }
         }
     }
-
-    private static string ComponentName(ComponentsFile.Types.ComponentRecord comp) =>
-        string.IsNullOrEmpty(comp.CompName) ? $"#{comp.Id}" : comp.CompName;
 
     private static string? ReadValueProperty(ComponentsFile.Types.ComponentRecord comp)
     {
@@ -243,99 +352,6 @@ public class ComponentDetailBuilder
         }
 
         return null;
-    }
-
-    private static PackageDetail? ResolvePackage(
-        ComponentsFile.Types.ComponentRecord comp,
-        EdaDataFile edaData,
-        double packageScale,
-        out string? pkgName)
-    {
-        if (comp.PkgRef >= edaData.PackageRecords.Count)
-        {
-            pkgName = null;
-            return null;
-        }
-
-        var pkg = edaData.PackageRecords[(int)comp.PkgRef];
-        pkgName = pkg.Name;
-        return new PackageDetail(
-            pkg.Name,
-            pkg.Pitch > 0 ? pkg.Pitch * packageScale : null,
-            pkg.XMin * packageScale,
-            pkg.YMin * packageScale,
-            pkg.XMax * packageScale,
-            pkg.YMax * packageScale,
-            pkg.PinRecords.Count,
-            pkg.OutlineRecords.Count);
-    }
-
-    /// <summary>
-    /// Net-number → name lookup for toeprint resolution. Toeprint numbers are
-    /// resolved against two overlapping number spaces — a net record's populated
-    /// <c>Index</c> field, or its ordinal position in the net list — so both are
-    /// claimed here, in a defined order: every named net first claims its
-    /// ordinal, then a second pass claims its <c>Index</c> only where that key
-    /// is still free. Ordinal precedence removes the list-order dependence of a
-    /// single pass: visited inline, a net whose populated <c>Index</c> equals a
-    /// later net's ordinal would steal that ordinal (first-wins) and misname
-    /// the later net's toeprints. Unnamed nets claim nothing; first-wins on
-    /// remaining collisions (two unset Index values both read 0): overwriting
-    /// the earlier claim would silently re-point every toeprint of the first
-    /// net at the second one.
-    /// </summary>
-    private static Dictionary<uint, string> BuildNetNameLookup(EdaDataFile edaData)
-    {
-        var lookup = new Dictionary<uint, string>();
-        for (var i = 0; i < edaData.NetRecords.Count; i++)
-        {
-            if (string.IsNullOrEmpty(edaData.NetRecords[i].Name))
-            {
-                continue;
-            }
-
-            lookup.TryAdd((uint)i, edaData.NetRecords[i].Name);
-        }
-
-        for (var i = 0; i < edaData.NetRecords.Count; i++)
-        {
-            var net = edaData.NetRecords[i];
-            if (string.IsNullOrEmpty(net.Name))
-            {
-                continue;
-            }
-
-            lookup.TryAdd(net.Index, net.Name);
-        }
-
-        return lookup;
-    }
-
-    /// <summary>
-    /// Pin rows for the inspector. Toeprint locations are component-local —
-    /// relative to the component origin, before the placement transform — and
-    /// are presented as such, not run through the render path's mirror → rotate →
-    /// translate to board space.
-    /// </summary>
-    private static List<PinDetail> BuildPins(
-        ComponentsFile.Types.ComponentRecord comp,
-        Dictionary<uint, string> netNamesByNumber,
-        double scale)
-    {
-        var pins = new List<PinDetail>(comp.ToeprintRecords.Count);
-        foreach (var toeprint in comp.ToeprintRecords)
-        {
-            pins.Add(new PinDetail(
-                toeprint.PinNumber,
-                string.IsNullOrEmpty(toeprint.Name) ? null : toeprint.Name,
-                toeprint.LocationX * scale,
-                toeprint.LocationY * scale,
-                toeprint.Rotation,
-                toeprint.NetNumber,
-                netNamesByNumber.TryGetValue(toeprint.NetNumber, out var netName) ? netName : null));
-        }
-
-        return pins;
     }
 
     private static List<NameValue> BuildNetAttributes(
@@ -357,113 +373,6 @@ public class ComponentDetailBuilder
         }
 
         return attributes;
-    }
-
-    private static void AddComponentLookups(
-        ComponentsFile? components,
-        BoardSide side,
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndex,
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndexAnySide)
-    {
-        if (components == null)
-        {
-            return;
-        }
-
-        for (var i = 0; i < components.ComponentRecords.Count; i++)
-        {
-            var comp = components.ComponentRecords[i];
-            AddLookup(byIndex, (side, (uint)i), comp, side, (uint)i);
-            AddLookupAnySide(byIndexAnySide, (uint)i, comp, side, (uint)i);
-        }
-    }
-
-    private static void AddLookup(
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> map,
-        (BoardSide Side, uint Number) key,
-        ComponentsFile.Types.ComponentRecord comp,
-        BoardSide side,
-        uint index)
-    {
-        if (!map.TryGetValue(key, out var list))
-        {
-            list = new List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>();
-            map[key] = list;
-        }
-
-        list.Add((comp, side, index));
-    }
-
-    private static void AddLookupAnySide(
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> map,
-        uint key,
-        ComponentsFile.Types.ComponentRecord comp,
-        BoardSide side,
-        uint index)
-    {
-        if (!map.TryGetValue(key, out var list))
-        {
-            list = new List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>();
-            map[key] = list;
-        }
-
-        list.Add((comp, side, index));
-    }
-
-    /// <summary>
-    /// Resolves an EDA-data component number to a component record on the subnet's
-    /// board side (component numbers are per-side) by list index (ordinal). A
-    /// reference resolves to nothing when the ordinal lookup fails or is
-    /// ambiguous — guessing beyond a unique match would silently mislabel the
-    /// results. A subnet whose side field is unset (proto3 optional reads as
-    /// <see cref="BoardSide.BsNone"/>, e.g. a server predating the field) falls
-    /// back to the side-blind number-only view, resolving only when unique
-    /// across both sides.
-    /// </summary>
-    /// <remarks>
-    /// The returned ordinal is the canonical per-component key for all
-    /// downstream bookkeeping: canonical component identity is refDes plus the
-    /// per-side ordinal (proto <c>ComponentRecord.index</c>). Component
-    /// <c>Id</c> is deliberately not consulted: the server never populates it
-    /// today (it is always 0 and not a join key), and once it ships ODB++ UIDs,
-    /// matching a per-side ordinal against a product-model-wide UID silently
-    /// mis-resolves (~10% on panelized designs). refDes is the external key;
-    /// this ordinal join is server-owned semantics the client must not
-    /// re-implement and goes away when server Connectivity ships.
-    /// </remarks>
-    private static (ComponentsFile.Types.ComponentRecord Comp, BoardSide Side, uint Index)? ResolveComponent(
-        uint componentNumber,
-        BoardSide side,
-        Dictionary<(BoardSide Side, uint Number), List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndex,
-        Dictionary<uint, List<(ComponentsFile.Types.ComponentRecord, BoardSide, uint)>> byIndexAnySide)
-    {
-        if (byIndex.TryGetValue((side, componentNumber), out var byIndexList) && byIndexList.Count == 1)
-        {
-            return byIndexList[0];
-        }
-
-        if (side == BoardSide.BsNone
-            && byIndexAnySide.TryGetValue(componentNumber, out var anyIndexList) && anyIndexList.Count == 1)
-        {
-            return anyIndexList[0];
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// The subnet's toeprint number indexes the component's toeprint records when
-    /// in range (the record's own pin number is authoritative); otherwise the
-    /// number itself is the pin number.
-    /// </summary>
-    private static uint ResolvePinNumber(uint toeprintNumber, ComponentsFile.Types.ComponentRecord? comp)
-    {
-        if (comp != null && toeprintNumber < (uint)comp.ToeprintRecords.Count)
-        {
-            return comp.ToeprintRecords[(int)toeprintNumber].PinNumber;
-        }
-
-        return toeprintNumber;
     }
 
     private static List<NameValue> BuildAttributes(

@@ -14,7 +14,7 @@ public sealed record PartInfo(string Name, int UsageCount);
 /// <param name="ToolNumber">The tool number.</param>
 /// <param name="DrillSizeMm">The drill bit size in millimeters.</param>
 /// <param name="FinishSizeMm">The finished hole size in millimeters.</param>
-/// <param name="ToolType">The tool type name (Plated, NonPlated, Via).</param>
+/// <param name="ToolType">The canonical tool type name (PLATED, NON_PLATED, VIA).</param>
 /// <param name="IsPlated">Whether the tool drills plated holes.</param>
 /// <param name="Units">The raw unit name from the tools file header.</param>
 public sealed record DrillToolInfo(
@@ -178,23 +178,23 @@ public class ProductModelReader
         var tools = new List<DrillToolInfo>();
         foreach (var layer in stepDir.LayersByName.Values)
         {
-            var toolsFile = layer.ToolFile;
+            var toolsFile = layer.Tools;
             if (toolsFile is null)
             {
                 continue;
             }
 
             var scale = UnitsHelper.UnitsToMmScale(toolsFile.Units);
-            foreach (var record in toolsFile.Tools.Values)
+            foreach (var record in toolsFile.Tools)
             {
                 var type = record.Type;
                 tools.Add(new DrillToolInfo(
-                    (int)record.ToolNum,
+                    (int)record.Num,
                     record.DrillSize * scale,
                     record.FinishSize * scale,
                     type.ToString(),
                     // Via tools drill plated via holes: only NonPlated is unplated.
-                    type != ToolsFile.Types.ToolsRecord.Types.Type.NonPlated,
+                    type != ToolsFile.Types.ToolType.NonPlated,
                     toolsFile.Units ?? string.Empty));
             }
         }

@@ -539,25 +539,25 @@ public class ComponentDetailBuilderTests
     {
         var design = CreateSyntheticDesign(CreateConnectivity());
         var tools = new ToolsFile { Units = "mm" };
-        tools.Tools[1] = new ToolsFile.Types.ToolsRecord
+        tools.Tools.Add(new ToolsFile.Types.Tool
         {
-            ToolNum = 1,
-            Type = ToolsFile.Types.ToolsRecord.Types.Type.Plated,
+            Num = 1,
+            Type = ToolsFile.Types.ToolType.Plated,
             DrillSize = 0.3,
-        };
-        tools.Tools[2] = new ToolsFile.Types.ToolsRecord
+        });
+        tools.Tools.Add(new ToolsFile.Types.Tool
         {
-            ToolNum = 2,
-            Type = ToolsFile.Types.ToolsRecord.Types.Type.NonPlated,
+            Num = 2,
+            Type = ToolsFile.Types.ToolType.NonPlated,
             DrillSize = 0.5,
-        };
-        tools.Tools[3] = new ToolsFile.Types.ToolsRecord
+        });
+        tools.Tools.Add(new ToolsFile.Types.Tool
         {
-            ToolNum = 3,
-            Type = ToolsFile.Types.ToolsRecord.Types.Type.Via,
+            Num = 3,
+            Type = ToolsFile.Types.ToolType.Via,
             DrillSize = 0.2,
-        };
-        design.FileModel.StepsByName["step"].LayersByName["drill"] = new LayerDirectory { ToolFile = tools };
+        });
+        design.FileModel.StepsByName["step"].LayersByName["drill"] = new LayerDirectory { Tools = tools };
 
         var model = new ProductModelReader(NullLoggerFactory.Instance).Read(design, "step");
 

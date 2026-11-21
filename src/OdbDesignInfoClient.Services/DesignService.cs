@@ -763,7 +763,7 @@ public class DesignService : IDesignService
     /// <param name="color">The color from the matrix layer record (null when absent).</param>
     /// <param name="layerType">The resolved layer type used for the fallback color.</param>
     /// <returns>A <c>#RRGGBB</c> string.</returns>
-    private static string ResolveLayerColor(Color? color, string layerType)
+    private static string ResolveLayerColor(RgbColor? color, string layerType)
     {
         if (color is null || color.NoPreference)
         {
@@ -773,7 +773,10 @@ public class DesignService : IDesignService
         return FormattableString.Invariant($"#{ToHex(color.Red)}{ToHex(color.Green)}{ToHex(color.Blue)}");
     }
 
-    private static string ToHex(double channel) => ((uint)Math.Clamp(channel, 0d, 255d)).ToString("X2");
+    // Canonical RgbColor channels are 0-100 percent components; scale to the
+    // 0-255 byte range the #RRGGBB form displays.
+    private static string ToHex(double percent) =>
+        ((uint)Math.Clamp(Math.Round(percent * 255d / 100d), 0d, 255d)).ToString("X2");
 
     /// <summary>
     /// Returns a conventional display color for a layer type when the design specifies none.

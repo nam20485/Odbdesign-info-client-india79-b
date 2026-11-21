@@ -45,7 +45,6 @@
     <Protobuf Include="..\..\protoc\pinconnection.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\edadatafile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\matrixfile.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
-    <Protobuf Include="..\..\protoc\color.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\stepdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\layerdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />
     <Protobuf Include="..\..\protoc\symbolsdirectory.proto" GrpcServices="None" ProtoRoot="..\..\protoc" />

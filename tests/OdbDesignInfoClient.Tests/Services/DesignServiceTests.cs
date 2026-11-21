@@ -116,8 +116,10 @@ public class DesignServiceTests
         // The enum default (0) is Signal, matching the JSON projection that
         // omitted the field for signal layers.
         Assert.Equal("Signal", result[2].Type);
-        // Real design color when set; type-based default when "noPreference".
-        Assert.Equal("#636337", result[3].ColorHex);
+        // Real design color when set (canonical RgbColor channels are 0-100
+        // percent, scaled to 0-255 bytes for display: 99% → 0xFC, 55% → 0x8C);
+        // type-based default when "noPreference".
+        Assert.Equal("#FCFC8C", result[3].ColorHex);
         Assert.Equal("#2196F3", result[1].ColorHex);
         // Drill span carried through ("" stays null in the domain model).
         Assert.Equal("LAYER-1", result[4].StartLayer);
@@ -744,7 +746,7 @@ public class DesignServiceTests
                         LayerRow(2, MatrixFile.Types.LayerRecord.Types.Type.SolderMask, "SOLDERMASK-TOP", noPreference: true),
                         LayerRow(3, MatrixFile.Types.LayerRecord.Types.Type.Signal, "LAYER-1", noPreference: true),
                         LayerRow(4, MatrixFile.Types.LayerRecord.Types.Type.Dielectric, "DIELECTRIC1",
-                            color: new Color { Red = 99, Green = 99, Blue = 55 }),
+                            color: new RgbColor { Red = 99, Green = 99, Blue = 55 }),
                         LayerRow(5, MatrixFile.Types.LayerRecord.Types.Type.Drill, "DRILL",
                             startName: "LAYER-1", endName: "LAYER-8", noPreference: true),
                     },
@@ -759,14 +761,14 @@ public class DesignServiceTests
         MatrixFile.Types.LayerRecord.Types.Type type,
         string name,
         bool noPreference = false,
-        Color? color = null,
+        RgbColor? color = null,
         string startName = "",
         string endName = "") => new()
     {
         Row = row,
         Type = type,
         Name = name,
-        Color = color ?? new Color { Red = 0, Green = 0, Blue = 0, NoPreference = noPreference },
+        Color = color ?? new RgbColor { Red = 0, Green = 0, Blue = 0, NoPreference = noPreference },
         StartName = startName,
         EndName = endName,
     };
@@ -855,24 +857,24 @@ public class DesignServiceTests
         };
         step.LayersByName["drill"] = new LayerDirectory
         {
-            ToolFile = new ToolsFile
+            Tools = new ToolsFile
             {
                 Units = "mm",
                 Tools =
                 {
-                    [2] = new ToolsFile.Types.ToolsRecord
+                    new ToolsFile.Types.Tool
                     {
-                        ToolNum = 2,
+                        Num = 2,
                         DrillSize = 0.8,
                         FinishSize = 0.8,
-                        Type = ToolsFile.Types.ToolsRecord.Types.Type.NonPlated,
+                        Type = ToolsFile.Types.ToolType.NonPlated,
                     },
-                    [1] = new ToolsFile.Types.ToolsRecord
+                    new ToolsFile.Types.Tool
                     {
-                        ToolNum = 1,
+                        Num = 1,
                         DrillSize = 0.5,
                         FinishSize = 0.5,
-                        Type = ToolsFile.Types.ToolsRecord.Types.Type.Plated,
+                        Type = ToolsFile.Types.ToolType.Plated,
                     },
                 },
             },
